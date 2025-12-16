@@ -1,9 +1,9 @@
 # gunicorn_config.py
 import os
 import logging
-from .kg.shared_storage import finalize_share_data
-from .utils import setup_logger, get_env_value
-from .constants import (
+from ..kg.shared_storage import finalize_share_data
+from ..utils import setup_logger, get_env_value
+from ..constants import (
     DEFAULT_LOG_MAX_BYTES,
     DEFAULT_LOG_BACKUP_COUNT,
     DEFAULT_LOG_FILENAME,
@@ -37,8 +37,8 @@ worker_class = "uvicorn.workers.UvicornWorker"
 # Other Gunicorn configurations
 
 # Logging configuration
-errorlog = os.getenv("ERROR_LOG", log_file_path)  # Default write to lightrag.log
-accesslog = os.getenv("ACCESS_LOG", log_file_path)  # Default write to lightrag.log
+errorlog = os.getenv("ERROR_LOG", log_file_path)  # Default write to hybridrag.log
+accesslog = os.getenv("ACCESS_LOG", log_file_path)  # Default write to hybridrag.log
 
 logconfig_dict = {
     "version": 1,
@@ -63,11 +63,11 @@ logconfig_dict = {
     },
     "filters": {
         "path_filter": {
-            "()": "lightrag.utils.LightragPathFilter",
+            "()": "hybridrag.engine.utils.HybridRagPathFilter",
         },
     },
     "loggers": {
-        "lightrag": {
+        "hybridrag": {
             "handlers": ["console", "file"],
             "level": loglevel.upper() if loglevel else "INFO",
             "propagate": False,
@@ -115,8 +115,8 @@ def on_starting(server):
     except ImportError:
         print("psutil not installed, skipping memory usage reporting")
 
-    # Log the location of the LightRAG log file
-    print(f"LightRAG log file: {log_file_path}\n")
+    # Log the location of the HybridRAG log file
+    print(f"HybridRAG log file: {log_file_path}\n")
 
     print("Gunicorn initialization complete, forking workers...\n")
 
@@ -148,11 +148,11 @@ def post_fork(server, worker):
     setup_logger(
         "uvicorn.access", log_level, add_filter=True, log_file_path=log_file_path
     )
-    setup_logger("lightrag", log_level, add_filter=True, log_file_path=log_file_path)
+    setup_logger("hybridrag", log_level, add_filter=True, log_file_path=log_file_path)
 
-    # Set up lightrag submodule loggers
+    # Set up hybridrag submodule loggers
     for name in logging.root.manager.loggerDict:
-        if name.startswith("lightrag."):
+        if name.startswith("hybridrag."):
             setup_logger(name, log_level, add_filter=True, log_file_path=log_file_path)
 
     # Disable uvicorn.error logger

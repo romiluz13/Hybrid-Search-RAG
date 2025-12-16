@@ -67,10 +67,10 @@ class StorageNotInitializedError(RuntimeError):
         super().__init__(
             f"{storage_type} not initialized. Please ensure proper initialization:\n"
             f"\n"
-            f"  rag = LightRAG(...)\n"
+            f"  rag = BaseRAGEngine(...)\n"
             f"  await rag.initialize_storages()  # Required - auto-initializes pipeline_status\n"
             f"\n"
-            f"See: https://github.com/HKUDS/LightRAG#important-initialization-requirements"
+            f"See: https://github.com/romiluz13/Hybrid-Search-RAG"
         )
 
 
@@ -85,10 +85,10 @@ class PipelineNotInitializedError(KeyError):
             f"If you see this error, please ensure:\n"
             f"\n"
             f"  1. You called await rag.initialize_storages()\n"
-            f"  2. For multi-workspace setups, each LightRAG instance was properly initialized\n"
+            f"  2. For multi-workspace setups, each HybridRAG instance was properly initialized\n"
             f"\n"
             f"Standard initialization:\n"
-            f"  rag = LightRAG(workspace='your_workspace')\n"
+            f"  rag = BaseRAGEngine(workspace='your_workspace')\n"
             f"  await rag.initialize_storages()  # Auto-initializes pipeline_status\n"
             f"\n"
             f"If you need manual control (advanced):\n"

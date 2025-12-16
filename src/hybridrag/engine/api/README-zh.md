@@ -1,6 +1,6 @@
-# LightRAG 服务器和 WebUI
+# HybridRAG 服务器和 WebUI
 
-LightRAG 服务器旨在提供 Web 界面和 API 支持。Web 界面便于文档索引、知识图谱探索和简单的 RAG 查询界面。LightRAG 服务器还提供了与 Ollama 兼容的接口，旨在将 LightRAG 模拟为 Ollama 聊天模型。这使得 AI 聊天机器人（如 Open WebUI）可以轻松访问 LightRAG。
+HybridRAG 服务器旨在提供 Web 界面和 API 支持。Web 界面便于文档索引、知识图谱探索和简单的 RAG 查询界面。HybridRAG 服务器还提供了与 Ollama 兼容的接口，旨在将 HybridRAG 模拟为 Ollama 聊天模型。这使得 AI 聊天机器人（如 Open WebUI）可以轻松访问 HybridRAG。
 
 ![image-20250323122538997](./README.assets/image-20250323122538997.png)
 
@@ -26,10 +26,10 @@ uv pip install "lightrag-hku[api]"
 
 ```bash
 # 克隆仓库
-git clone https://github.com/HKUDS/lightrag.git
+git clone https://github.com/HybridRAG/HybridRAG.git
 
 # 进入仓库目录
-cd lightrag
+cd HybridRAG
 
 # 使用 uv (推荐)
 # 注意: uv sync 会自动在 .venv/ 目录创建虚拟环境
@@ -43,15 +43,15 @@ source .venv/bin/activate  # 激活虚拟环境 (Linux/macOS)
 # pip install -e ".[api]"
 
 # 构建前端代码
-cd lightrag_webui
+cd hybridrag_webui
 bun install --frozen-lockfile
 bun run build
 cd ..
 ```
 
-### 启动 LightRAG 服务器前的准备
+### 启动 HybridRAG 服务器前的准备
 
-LightRAG 需要同时集成 LLM（大型语言模型）和嵌入模型以有效执行文档索引和查询操作。在首次部署 LightRAG 服务器之前，必须配置 LLM 和嵌入模型的设置。LightRAG 支持绑定到各种 LLM/嵌入后端：
+HybridRAG 需要同时集成 LLM（大型语言模型）和嵌入模型以有效执行文档索引和查询操作。在首次部署 HybridRAG 服务器之前，必须配置 LLM 和嵌入模型的设置。HybridRAG 支持绑定到各种 LLM/嵌入后端：
 
 * ollama
 * lollms
@@ -59,7 +59,7 @@ LightRAG 需要同时集成 LLM（大型语言模型）和嵌入模型以有效�
 * azure_openai
 * aws_bedrock
 
-建议使用环境变量来配置 LightRAG 服务器。项目根目录中有一个名为 `env.example` 的示例环境变量文件。请将此文件复制到启动目录并重命名为 `.env`。之后，您可以在 `.env` 文件中修改与 LLM 和嵌入模型相关的参数。需要注意的是，LightRAG 服务器每次启动时都会将 `.env` 中的环境变量加载到系统环境变量中。**LightRAG 服务器会优先使用系统环境变量中的设置**。
+建议使用环境变量来配置 HybridRAG 服务器。项目根目录中有一个名为 `env.example` 的示例环境变量文件。请将此文件复制到启动目录并重命名为 `.env`。之后，您可以在 `.env` 文件中修改与 LLM 和嵌入模型相关的参数。需要注意的是，HybridRAG 服务器每次启动时都会将 `.env` 中的环境变量加载到系统环境变量中。**HybridRAG 服务器会优先使用系统环境变量中的设置**。
 
 > 由于安装了 Python 扩展的 VS Code 可能会在集成终端中自动加载 .env 文件，请在每次修改 .env 文件后打开新的终端会话。
 
@@ -97,22 +97,22 @@ EMBEDDING_DIM=1024
 # EMBEDDING_BINDING_API_KEY=your_api_key
 ```
 
-> **重要提示**：在文档索引前必须确定使用的Embedding模型，且在文档查询阶段必须沿用与索引阶段相同的模型。有些存储（例如PostgreSQL）在首次建立数表的时候需要确定向量维度，因此更换Embedding模型后需要删除向量相关库表，以便让LightRAG重建新的库表。
+> **重要提示**：在文档索引前必须确定使用的Embedding模型，且在文档查询阶段必须沿用与索引阶段相同的模型。有些存储（例如PostgreSQL）在首次建立数表的时候需要确定向量维度，因此更换Embedding模型后需要删除向量相关库表，以便让HybridRAG重建新的库表。
 
-### 启动 LightRAG 服务器
+### 启动 HybridRAG 服务器
 
-LightRAG 服务器支持两种运行模式：
+HybridRAG 服务器支持两种运行模式：
 * 简单高效的 Uvicorn 模式
 
 ```
-lightrag-server
+python -m hybridrag.engine.api.rag_server
 ```
 * 多进程 Gunicorn + Uvicorn 模式（生产模式，不支持 Windows 环境）
 
 ```
-lightrag-gunicorn --workers 4
+python -m hybridrag.engine.api.run_with_gunicorn --workers 4
 ```
-启动LightRAG的时候，当前工作目录必须含有`.env`配置文件。**要求将.env文件置于启动目录中是经过特意设计的**。 这样做的目的是支持用户同时启动多个LightRAG实例，并为不同实例配置不同的.env文件。**修改.env文件后，您需要重新打开终端以使新设置生效**。 这是因为每次启动时，LightRAG Server会将.env文件中的环境变量加载至系统环境变量，且系统环境变量的设置具有更高优先级。
+启动HybridRAG的时候，当前工作目录必须含有`.env`配置文件。**要求将.env文件置于启动目录中是经过特意设计的**。 这样做的目的是支持用户同时启动多个HybridRAG实例，并为不同实例配置不同的.env文件。**修改.env文件后，您需要重新打开终端以使新设置生效**。 这是因为每次启动时，HybridRAG Server会将.env文件中的环境变量加载至系统环境变量，且系统环境变量的设置具有更高优先级。
 
 启动时可以通过命令行参数覆盖`.env`文件中的配置。常用的命令行参数包括：
 
@@ -122,48 +122,48 @@ lightrag-gunicorn --workers 4
 - `--log-level`：日志级别（默认：INFO）
 - `--working-dir`：数据库持久化目录（默认：./rag_storage）
 - `--input-dir`：上传文件存放目录（默认：./inputs）
-- `--workspace`: 工作空间名称，用于逻辑上隔离多个LightRAG实例之间的数据（默认：空）
+- `--workspace`: 工作空间名称，用于逻辑上隔离多个HybridRAG实例之间的数据（默认：空）
 
-### 使用 Docker 启动 LightRAG 服务器
+### 使用 Docker 启动 HybridRAG 服务器
 
-使用 Docker Compose 是部署和运行 LightRAG Server 最便捷的方式。
+使用 Docker Compose 是部署和运行 HybridRAG Server 最便捷的方式。
 - 创建一个项目目录。
-- 将 LightRAG 仓库中的 `docker-compose.yml` 文件复制到您的项目目录中。
+- 将 HybridRAG 仓库中的 `docker-compose.yml` 文件复制到您的项目目录中。
 - 准备 `.env` 文件：复制示例文件 [`env.example`](https://ai.znipower.com:5013/c/env.example) 创建自定义的 `.env` 文件，并根据您的具体需求配置 LLM 和嵌入参数。
 
-* 通过以下命令启动 LightRAG 服务器：
+* 通过以下命令启动 HybridRAG 服务器：
 
 ```shell
 docker compose up
 # 如果希望启动后让程序退到后台运行，需要在命令的最后添加 -d 参数
 ```
-> 可以通过以下链接获取官方的docker compose文件：[docker-compose.yml]( https://raw.githubusercontent.com/HKUDS/LightRAG/refs/heads/main/docker-compose.yml) 。如需获取LightRAG的历史版本镜像，可以访问以下链接: [LightRAG Docker Images]( https://github.com/HKUDS/LightRAG/pkgs/container/lightrag). 如需获取更多关于docker部署的信息，请参阅 [DockerDeployment.md](./../../docs/DockerDeployment.md).
+> 可以通过以下链接获取官方的docker compose文件：[docker-compose.yml]( https://raw.githubusercontent.com/HybridRAG/HybridRAG/refs/heads/main/docker-compose.yml) 。如需获取HybridRAG的历史版本镜像，可以访问以下链接: [HybridRAG Docker Images]( https://github.com/HybridRAG/HybridRAG/pkgs/container/hybridrag). 如需获取更多关于docker部署的信息，请参阅 [DockerDeployment.md](./../../docs/DockerDeployment.md).
 
 ### 离线部署
 
-官方的 LightRAG Docker 镜像完全兼容离线或隔离网络环境。如需搭建自己的离线部署环境，请参考 [离线部署指南](./../../docs/OfflineDeployment.md)。
+官方的 HybridRAG Docker 镜像完全兼容离线或隔离网络环境。如需搭建自己的离线部署环境，请参考 [离线部署指南](./../../docs/OfflineDeployment.md)。
 
-### 启动多个LightRAG实例
+### 启动多个HybridRAG实例
 
-有两种方式可以启动多个LightRAG实例。第一种方式是为每个实例配置一个完全独立的工作环境。此时需要为每个实例创建一个独立的工作目录，然后在这个工作目录上放置一个当前实例专用的`.env`配置文件。不同实例的配置文件中的服务器监听端口不能重复，然后在工作目录上执行 lightrag-server 启动服务即可。
+有两种方式可以启动多个HybridRAG实例。第一种方式是为每个实例配置一个完全独立的工作环境。此时需要为每个实例创建一个独立的工作目录，然后在这个工作目录上放置一个当前实例专用的`.env`配置文件。不同实例的配置文件中的服务器监听端口不能重复，然后在工作目录上执行 python -m hybridrag.engine.api.rag_server 启动服务即可。
 
-第二种方式是所有实例共享一套相同的`.env`配置文件，然后通过命令行参数来为每个实例指定不同的服务器监听端口和工作空间。你可以在同一个工作目录中通过不同的命令行参数启动多个LightRAG实例。例如：
+第二种方式是所有实例共享一套相同的`.env`配置文件，然后通过命令行参数来为每个实例指定不同的服务器监听端口和工作空间。你可以在同一个工作目录中通过不同的命令行参数启动多个HybridRAG实例。例如：
 
 ```
 # 启动实例1
-lightrag-server --port 9621 --workspace space1
+python -m hybridrag.engine.api.rag_server --port 9621 --workspace space1
 
 # 启动实例2
-lightrag-server --port 9622 --workspace space2
+python -m hybridrag.engine.api.rag_server --port 9622 --workspace space2
 ```
 
 工作空间的作用是实现不同实例之间的数据隔离。因此不同实例之间的`workspace`参数必须不同，否则会导致数据混乱，数据将会被破坏。
 
-通过 Docker Compose 启动多个 LightRAG 实例时，只需在 `docker-compose.yml` 中为每个容器指定不同的 `WORKSPACE` 和 `PORT` 环境变量即可。即使所有实例共享同一个 `.env` 文件，Compose 中定义的容器环境变量也会优先覆盖 `.env` 文件中的同名设置，从而确保每个实例拥有独立的配置。
+通过 Docker Compose 启动多个 HybridRAG 实例时，只需在 `docker-compose.yml` 中为每个容器指定不同的 `WORKSPACE` 和 `PORT` 环境变量即可。即使所有实例共享同一个 `.env` 文件，Compose 中定义的容器环境变量也会优先覆盖 `.env` 文件中的同名设置，从而确保每个实例拥有独立的配置。
 
-### LightRAG实例间的数据隔离
+### HybridRAG实例间的数据隔离
 
-每个实例配置一个独立的工作目录和专用`.env`配置文件通常能够保证内存数据库中的本地持久化文件保存在各自的工作目录，实现数据的相互隔离。LightRAG默认存储全部都是内存数据库，通过这种方式进行数据隔离是没有问题的。但是如果使用的是外部数据库，如果不同实例访问的是同一个数据库实例，就需要通过配置工作空间来实现数据隔离，否则不同实例的数据将会出现冲突并被破坏。
+每个实例配置一个独立的工作目录和专用`.env`配置文件通常能够保证内存数据库中的本地持久化文件保存在各自的工作目录，实现数据的相互隔离。HybridRAG默认存储全部都是内存数据库，通过这种方式进行数据隔离是没有问题的。但是如果使用的是外部数据库，如果不同实例访问的是同一个数据库实例，就需要通过配置工作空间来实现数据隔离，否则不同实例的数据将会出现冲突并被破坏。
 
 命令行的 workspace 参数和`.env`文件中的环境变量`WORKSPACE` 都可以用于指定当前实例的工作空间名字，命令行参数的优先级别更高。下面是不同类型的存储实现工作空间的方式：
 
@@ -177,9 +177,9 @@ lightrag-server --port 9622 --workspace space2
 
 ### Gunicorn + Uvicorn 的多工作进程
 
-LightRAG 服务器可以在 `Gunicorn + Uvicorn` 预加载模式下运行。Gunicorn 的多工作进程（多进程）功能可以防止文档索引任务阻塞 RAG 查询。使用 CPU 密集型文档提取工具（如 docling）在纯 Uvicorn 模式下可能会导致整个系统被阻塞。
+HybridRAG 服务器可以在 `Gunicorn + Uvicorn` 预加载模式下运行。Gunicorn 的多工作进程（多进程）功能可以防止文档索引任务阻塞 RAG 查询。使用 CPU 密集型文档提取工具（如 docling）在纯 Uvicorn 模式下可能会导致整个系统被阻塞。
 
-虽然 LightRAG 服务器使用一个工作进程来处理文档索引流程，但通过 Uvicorn 的异步任务支持，可以并行处理多个文件。文档索引速度的瓶颈主要在于 LLM。如果您的 LLM 支持高并发，您可以通过增加 LLM 的并发级别来加速文档索引。以下是几个与并发处理相关的环境变量及其默认值：
+虽然 HybridRAG 服务器使用一个工作进程来处理文档索引流程，但通过 Uvicorn 的异步任务支持，可以并行处理多个文件。文档索引速度的瓶颈主要在于 LLM。如果您的 LLM 支持高并发，您可以通过增加 LLM 的并发级别来加速文档索引。以下是几个与并发处理相关的环境变量及其默认值：
 
 ```
 ### 工作进程数，数字不大于 (2 x 核心数) + 1
@@ -190,36 +190,36 @@ MAX_PARALLEL_INSERT=2
 MAX_ASYNC=4
 ```
 
-### 将 Lightrag 安装为 Linux 服务
+### 将 HybridRAG 安装为 Linux 服务
 
-从示例文件 `lightrag.service.example` 创建您的服务文件 `lightrag.service`。修改服务文件中的服务启动定义：
+从示例文件 `lightrag.service.example` 创建您的服务文件 `hybridrag.service`。修改服务文件中的服务启动定义：
 
 ```text
 # Set Enviroment to your Python virtual enviroment
-Environment="PATH=/home/netman/lightrag-xyj/venv/bin"
-WorkingDirectory=/home/netman/lightrag-xyj
-# ExecStart=/home/netman/lightrag-xyj/venv/bin/lightrag-server
-ExecStart=/home/netman/lightrag-xyj/venv/bin/lightrag-gunicorn
+Environment="PATH=/home/netman/hybridrag-xyj/venv/bin"
+WorkingDirectory=/home/netman/hybridrag-xyj
+# ExecStart=/home/netman/hybridrag-xyj/venv/bin/python -m hybridrag.engine.api.rag_server
+ExecStart=/home/netman/hybridrag-xyj/venv/bin/python -m hybridrag.engine.api.run_with_gunicorn
 ```
-> ExecStart命令必须是 lightrag-gunicorn 或 lightrag-server 中的一个，不能使用其它脚本包裹它们。因为停止服务必须要求主进程必须是这两个进程。
+> ExecStart命令必须是 python -m hybridrag... 中的一个，不能使用其它脚本包裹它们。因为停止服务必须要求主进程必须是这两个进程。
 
-安装 LightRAG 服务。如果您的系统是 Ubuntu，以下命令将生效：
+安装 HybridRAG 服务。如果您的系统是 Ubuntu，以下命令将生效：
 
 ```shell
-sudo cp lightrag.service /etc/systemd/system/
+sudo cp hybridrag.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl start lightrag.service
-sudo systemctl status lightrag.service
-sudo systemctl enable lightrag.service
+sudo systemctl start hybridrag.service
+sudo systemctl status hybridrag.service
+sudo systemctl enable hybridrag.service
 ```
 
 ## Ollama 模拟
 
-我们为 LightRAG 提供了 Ollama 兼容接口，旨在将 LightRAG 模拟为 Ollama 聊天模型。这使得支持 Ollama 的 AI 聊天前端（如 Open WebUI）可以轻松访问 LightRAG。
+我们为 HybridRAG 提供了 Ollama 兼容接口，旨在将 HybridRAG 模拟为 Ollama 聊天模型。这使得支持 Ollama 的 AI 聊天前端（如 Open WebUI）可以轻松访问 HybridRAG。
 
-### 将 Open WebUI 连接到 LightRAG
+### 将 Open WebUI 连接到 HybridRAG
 
-启动 lightrag-server 后，您可以在 Open WebUI 管理面板中添加 Ollama 类型的连接。然后，一个名为 `lightrag:latest` 的模型将出现在 Open WebUI 的模型管理界面中。用户随后可以通过聊天界面向 LightRAG 发送查询。对于这种用例，最好将 LightRAG 安装为服务。
+启动 HybridRAG Server 后，您可以在 Open WebUI 管理面板中添加 Ollama 类型的连接。然后，一个名为 `hybridrag:latest` 的模型将出现在 Open WebUI 的模型管理界面中。用户随后可以通过聊天界面向 HybridRAG 发送查询。对于这种用例，最好将 HybridRAG 安装为服务。
 
 Open WebUI 使用 LLM 来执行会话标题和会话关键词生成任务。因此，Ollama 聊天补全 API 会检测并将 OpenWebUI 会话相关请求直接转发给底层 LLM。Open WebUI 的截图：
 
@@ -227,9 +227,9 @@ Open WebUI 使用 LLM 来执行会话标题和会话关键词生成任务。因�
 
 ### 在聊天中选择查询模式
 
-如果您从 LightRAG 的 Ollama 接口发送消息（查询），默认查询模式是 `hybrid`。您可以通过发送带有查询前缀的消息来选择查询模式。
+如果您从 HybridRAG 的 Ollama 接口发送消息（查询），默认查询模式是 `hybrid`。您可以通过发送带有查询前缀的消息来选择查询模式。
 
-查询字符串中的查询前缀可以决定使用哪种 LightRAG 查询模式来生成响应。支持的前缀包括：
+查询字符串中的查询前缀可以决定使用哪种 HybridRAG 查询模式来生成响应。支持的前缀包括：
 
 ```
 /local
@@ -247,15 +247,15 @@ Open WebUI 使用 LLM 来执行会话标题和会话关键词生成任务。因�
 /mixcontext
 ```
 
-例如，聊天消息 "/mix 唐僧有几个徒弟" 将触发 LightRAG 的混合模式查询。没有查询前缀的聊天消息默认会触发混合模式查询。
+例如，聊天消息 "/mix 唐僧有几个徒弟" 将触发 HybridRAG 的混合模式查询。没有查询前缀的聊天消息默认会触发混合模式查询。
 
-"/bypass" 不是 LightRAG 查询模式，它会告诉 API 服务器将查询连同聊天历史直接传递给底层 LLM。因此用户可以使用 LLM 基于聊天历史回答问题。如果您使用 Open WebUI 作为前端，您可以直接切换到普通 LLM 模型，而不是使用 /bypass 前缀。
+"/bypass" 不是 HybridRAG 查询模式，它会告诉 API 服务器将查询连同聊天历史直接传递给底层 LLM。因此用户可以使用 LLM 基于聊天历史回答问题。如果您使用 Open WebUI 作为前端，您可以直接切换到普通 LLM 模型，而不是使用 /bypass 前缀。
 
-"/context" 也不是 LightRAG 查询模式，它会告诉 LightRAG 只返回为 LLM 准备的上下文信息。您可以检查上下文是否符合您的需求，或者自行处理上下文。
+"/context" 也不是 HybridRAG 查询模式，它会告诉 HybridRAG 只返回为 LLM 准备的上下文信息。您可以检查上下文是否符合您的需求，或者自行处理上下文。
 
 ### 在聊天中添加用户提示词
 
-使用LightRAG进行内容查询时，应避免将搜索过程与无关的输出处理相结合，这会显著影响查询效果。用户提示（user prompt）正是为解决这一问题而设计 -- 它不参与RAG检索阶段，而是在查询完成后指导大语言模型（LLM）如何处理检索结果。我们可以在查询前缀末尾添加方括号，从而向LLM传递用户提示词：
+使用HybridRAG进行内容查询时，应避免将搜索过程与无关的输出处理相结合，这会显著影响查询效果。用户提示（user prompt）正是为解决这一问题而设计 -- 它不参与RAG检索阶段，而是在查询完成后指导大语言模型（LLM）如何处理检索结果。我们可以在查询前缀末尾添加方括号，从而向LLM传递用户提示词：
 
 ```
 /[使用mermaid格式画图] 请画出 Scrooge 的人物关系图谱
@@ -264,18 +264,18 @@ Open WebUI 使用 LLM 来执行会话标题和会话关键词生成任务。因�
 
 ## API 密钥和认证
 
-默认情况下，LightRAG 服务器可以在没有任何认证的情况下访问。我们可以使用 API 密钥或账户凭证配置服务器以确保其安全。
+默认情况下，HybridRAG 服务器可以在没有任何认证的情况下访问。我们可以使用 API 密钥或账户凭证配置服务器以确保其安全。
 
 * API 密钥
 
 ```
-LIGHTRAG_API_KEY=your-secure-api-key-here
+HYBRIDRAG_API_KEY=your-secure-api-key-here
 WHITELIST_PATHS=/health,/api/*
 ```
 
 > 健康检查和 Ollama 模拟端点默认不进行 API 密钥检查。为了安全原因，如果不需要提供Ollama服务，应该把`/api/*`从WHITELIST_PATHS中移除。
 
-API Key使用的请求头是 `X-API-Key` 。以下是使用API访问LightRAG Server的一个例子：
+API Key使用的请求头是 `X-API-Key` 。以下是使用API访问HybridRAG Server的一个例子：
 
 ```
 curl -X 'POST' \
@@ -287,7 +287,7 @@ curl -X 'POST' \
 
 * 账户凭证（Web 界面需要登录后才能访问）
 
-LightRAG API 服务器使用基于 HS256 算法的 JWT 认证。要启用安全访问控制，需要以下环境变量：
+HybridRAG API 服务器使用基于 HS256 算法的 JWT 认证。要启用安全访问控制，需要以下环境变量：
 
 ```bash
 # JWT 认证
@@ -306,9 +306,9 @@ TOKEN_EXPIRE_HOURS=4
 
 ```bash
 # 根据需要更改资源组名称、位置和 OpenAI 资源名称
-RESOURCE_GROUP_NAME=LightRAG
+RESOURCE_GROUP_NAME=HybridRAG
 LOCATION=swedencentral
-RESOURCE_NAME=LightRAG-OpenAI
+RESOURCE_NAME=HybridRAG-OpenAI
 
 az login
 az group create --name $RESOURCE_GROUP_NAME --location $LOCATION
@@ -335,7 +335,7 @@ EMBEDDING_BINDING=azure_openai
 EMBEDDING_MODEL=your-embedding-deployment-name
 ```
 
-## LightRAG 服务器详细配置
+## HybridRAG 服务器详细配置
 
 API 服务器可以通过三种方式配置（优先级从高到低）：
 
@@ -347,7 +347,7 @@ API 服务器可以通过三种方式配置（优先级从高到低）：
 
 ### 支持的 LLM 和嵌入后端
 
-LightRAG 支持绑定到各种 LLM/嵌入后端：
+HybridRAG 支持绑定到各种 LLM/嵌入后端：
 
 * ollama
 * openai (含openai 兼容)
@@ -360,9 +360,9 @@ LightRAG 支持绑定到各种 LLM/嵌入后端：
 LLM和Embedding配置例子请查看项目根目录的 env.example 文件。OpenAI和Ollama兼容LLM接口的支持的完整配置选型可以通过一下命令查看：
 
 ```
-lightrag-server --llm-binding openai --help
-lightrag-server --llm-binding ollama --help
-lightrag-server --embedding-binding ollama --help
+python -m hybridrag.engine.api.rag_server --llm-binding openai --help
+python -m hybridrag.engine.api.rag_server --llm-binding ollama --help
+python -m hybridrag.engine.api.rag_server --embedding-binding ollama --help
 ```
 
 > 请使用openai兼容方式访问OpenRouter、vLLM或SLang部署的LLM。可以通过 `OPENAI_LLM_EXTRA_BODY` 环境变量给OpenRouter、vLLM或SGLang推理框架传递额外的参数，实现推理模式的关闭或者其它个性化控制。
@@ -388,31 +388,31 @@ OPENAI_LLM_MAX_COMPLETION_TOKENS=9000
 
 ### 支持的存储类型
 
-LightRAG 使用 4 种类型的存储用于不同目的：
+HybridRAG 使用 4 种类型的存储用于不同目的：
 
 * KV_STORAGE：llm 响应缓存、文本块、文档信息
 * VECTOR_STORAGE：实体向量、关系向量、块向量
 * GRAPH_STORAGE：实体关系图
 * DOC_STATUS_STORAGE：文档索引状态
 
-每种存储类型都有多种存储实现方式。LightRAG Server默认的存储实现为内存数据库，数据通过文件持久化保存到WORKING_DIR目录。LightRAG还支持PostgreSQL、MongoDB、FAISS、Milvus、Qdrant、Neo4j、Memgraph和Redis等存储实现方式。详细的存储支持方式请参考根目录下的`README.md`文件中关于存储的相关内容。
+每种存储类型都有多种存储实现方式。HybridRAG Server默认的存储实现为内存数据库，数据通过文件持久化保存到WORKING_DIR目录。HybridRAG还支持PostgreSQL、MongoDB、FAISS、Milvus、Qdrant、Neo4j、Memgraph和Redis等存储实现方式。详细的存储支持方式请参考根目录下的`README.md`文件中关于存储的相关内容。
 
 您可以通过环境变量选择存储实现。例如，在首次启动 API 服务器之前，您可以将以下环境变量设置为特定的存储实现名称：
 
 ```
-LIGHTRAG_KV_STORAGE=PGKVStorage
-LIGHTRAG_VECTOR_STORAGE=PGVectorStorage
-LIGHTRAG_GRAPH_STORAGE=PGGraphStorage
-LIGHTRAG_DOC_STATUS_STORAGE=PGDocStatusStorage
+HYBRIDRAG_KV_STORAGE=PGKVStorage
+HYBRIDRAG_VECTOR_STORAGE=PGVectorStorage
+HYBRIDRAG_GRAPH_STORAGE=PGGraphStorage
+HYBRIDRAG_DOC_STATUS_STORAGE=PGDocStatusStorage
 ```
 
-在向 LightRAG 添加文档后，您不能更改存储实现选择。目前尚不支持从一个存储实现迁移到另一个存储实现。更多配置信息请阅读示例 `env.exampl`e文件。
+在向 HybridRAG 添加文档后，您不能更改存储实现选择。目前尚不支持从一个存储实现迁移到另一个存储实现。更多配置信息请阅读示例 `env.exampl`e文件。
 
 ### 在不同存储类型之间迁移LLM缓存
 
-当LightRAG更换存储实现方式的时候，可以LLM缓存从就的存储迁移到新的存储。先以后在新的存储上重新上传文件时，将利用利用原有存储的LLM缓存大幅度加快文件处理的速度。LLM缓存迁移工具的使用方法请参考[README_MIGRATE_LLM_CACHE.md](../tools/README_MIGRATE_LLM_CACHE.md)
+当HybridRAG更换存储实现方式的时候，可以LLM缓存从就的存储迁移到新的存储。先以后在新的存储上重新上传文件时，将利用利用原有存储的LLM缓存大幅度加快文件处理的速度。LLM缓存迁移工具的使用方法请参考[README_MIGRATE_LLM_CACHE.md](../tools/README_MIGRATE_LLM_CACHE.md)
 
-### LightRag API 服务器命令行选项
+### HybridRAG API 服务器命令行选项
 
 | 参数 | 默认值 | 描述 |
 |-----------|---------|-------------|
@@ -423,7 +423,7 @@ LIGHTRAG_DOC_STATUS_STORAGE=PGDocStatusStorage
 | --max-async | 4 | 最大异步操作数 |
 | --log-level | INFO | 日志级别（DEBUG、INFO、WARNING、ERROR、CRITICAL） |
 | --verbose | - | 详细调试输出（True、False） |
-| --key | None | 用于认证的 API 密钥。保护 lightrag 服务器免受未授权访问 |
+| --key | None | 用于认证的 API 密钥。保护 hybridrag 服务器免受未授权访问 |
 | --ssl | False | 启用 HTTPS |
 | --ssl-certfile | None | SSL 证书文件路径（如果启用 --ssl 则必需） |
 | --ssl-keyfile | None | SSL 私钥文件路径（如果启用 --ssl 则必需） |
@@ -432,7 +432,7 @@ LIGHTRAG_DOC_STATUS_STORAGE=PGDocStatusStorage
 
 ### Reranking 配置
 
-Reranking 查询召回的块可以显著提高检索质量，它通过基于优化的相关性评分模型对文档重新排序。LightRAG 目前支持以下 rerank 提供商：
+Reranking 查询召回的块可以显著提高检索质量，它通过基于优化的相关性评分模型对文档重新排序。HybridRAG 目前支持以下 rerank 提供商：
 
 - **Cohere / vLLM**：提供与 Cohere AI 的 `v2/rerank` 端点的完整 API 集成。由于 vLLM 提供了与 Cohere 兼容的 reranker API，因此也支持所有通过 vLLM 部署的 reranker 模型。
 - **Jina AI**：提供与所有 Jina rerank 模型的完全实现兼容性。
@@ -498,65 +498,65 @@ EMBEDDING_BINDING_HOST=http://localhost:11434
 
 ### For JWT Auth
 # AUTH_ACCOUNTS='admin:admin123,user1:pass456'
-# TOKEN_SECRET=your-key-for-LightRAG-API-Server-xxx
+# TOKEN_SECRET=your-key-for-HybridRAG-API-Server-xxx
 # TOKEN_EXPIRE_HOURS=48
 
-# LIGHTRAG_API_KEY=your-secure-api-key-here-123
+# HYBRIDRAG_API_KEY=your-secure-api-key-here-123
 # WHITELIST_PATHS=/api/*
 # WHITELIST_PATHS=/health,/api/*
 ```
 
-#### 使用 ollama 默认本地服务器作为 llm 和嵌入后端运行 Lightrag 服务器
+#### 使用 ollama 默认本地服务器作为 llm 和嵌入后端运行 HybridRAG 服务器
 
-Ollama 是 llm 和嵌入的默认后端，因此默认情况下您可以不带参数运行 lightrag-server，将使用默认值。确保已安装 ollama 并且正在运行，且默认模型已安装在 ollama 上。
+Ollama 是 llm 和嵌入的默认后端，因此默认情况下您可以不带参数运行 hybridrag-server，将使用默认值。确保已安装 ollama 并且正在运行，且默认模型已安装在 ollama 上。
 
 ```bash
-# 使用 ollama 运行 lightrag，llm 使用 mistral-nemo:latest，嵌入使用 bge-m3:latest
-lightrag-server
+# 使用 ollama 运行 hybridrag，llm 使用 mistral-nemo:latest，嵌入使用 bge-m3:latest
+python -m hybridrag.engine.api.rag_server
 
 # 使用认证密钥
-lightrag-server --key my-key
+python -m hybridrag.engine.api.rag_server --key my-key
 ```
 
-#### 使用 lollms 默认本地服务器作为 llm 和嵌入后端运行 Lightrag 服务器
+#### 使用 lollms 默认本地服务器作为 llm 和嵌入后端运行 HybridRAG 服务器
 
 ```bash
-# 使用 lollms 运行 lightrag，llm 使用 mistral-nemo:latest，嵌入使用 bge-m3:latest
+# 使用 lollms 运行 hybridrag，llm 使用 mistral-nemo:latest，嵌入使用 bge-m3:latest
 # 在 .env 或 config.ini 中配置 LLM_BINDING=lollms 和 EMBEDDING_BINDING=lollms
-lightrag-server
+python -m hybridrag.engine.api.rag_server
 
 # 使用认证密钥
-lightrag-server --key my-key
+python -m hybridrag.engine.api.rag_server --key my-key
 ```
 
-#### 使用 openai 服务器作为 llm 和嵌入后端运行 Lightrag 服务器
+#### 使用 openai 服务器作为 llm 和嵌入后端运行 HybridRAG 服务器
 
 ```bash
-# 使用 openai 运行 lightrag，llm 使用 GPT-4o-mini，嵌入使用 text-embedding-3-small
+# 使用 openai 运行 hybridrag，llm 使用 GPT-4o-mini，嵌入使用 text-embedding-3-small
 # 在 .env 或 config.ini 中配置：
 # LLM_BINDING=openai
 # LLM_MODEL=GPT-4o-mini
 # EMBEDDING_BINDING=openai
 # EMBEDDING_MODEL=text-embedding-3-small
-lightrag-server
+python -m hybridrag.engine.api.rag_server
 
 # 使用认证密钥
-lightrag-server --key my-key
+python -m hybridrag.engine.api.rag_server --key my-key
 ```
 
-#### 使用 azure openai 服务器作为 llm 和嵌入后端运行 Lightrag 服务器
+#### 使用 azure openai 服务器作为 llm 和嵌入后端运行 HybridRAG 服务器
 
 ```bash
-# 使用 azure_openai 运行 lightrag
+# 使用 azure_openai 运行 hybridrag
 # 在 .env 或 config.ini 中配置：
 # LLM_BINDING=azure_openai
 # LLM_MODEL=your-model
 # EMBEDDING_BINDING=azure_openai
 # EMBEDDING_MODEL=your-embedding-model
-lightrag-server
+python -m hybridrag.engine.api.rag_server
 
 # 使用认证密钥
-lightrag-server --key my-key
+python -m hybridrag.engine.api.rag_server --key my-key
 ```
 
 **重要说明：**
@@ -567,17 +567,17 @@ lightrag-server --key my-key
 
 要获取任何服务器的帮助，使用 --help 标志：
 ```bash
-lightrag-server --help
+python -m hybridrag.engine.api.rag_server --help
 ```
 
 注意：如果您不需要 API 功能，可以使用以下命令安装不带 API 支持的基本包：
 ```bash
-pip install lightrag-hku
+pip install hybridrag
 ```
 
 ## 文档和块处理逻辑说明
 
-LightRAG 中的文档处理流程有些复杂，分为两个主要阶段：提取阶段（实体和关系提取）和合并阶段（实体和关系合并）。有两个关键参数控制流程并发性：并行处理的最大文件数（`MAX_PARALLEL_INSERT`）和最大并发 LLM 请求数（`MAX_ASYNC`）。工作流程描述如下：
+HybridRAG 中的文档处理流程有些复杂，分为两个主要阶段：提取阶段（实体和关系提取）和合并阶段（实体和关系合并）。有两个关键参数控制流程并发性：并行处理的最大文件数（`MAX_PARALLEL_INSERT`）和最大并发 LLM 请求数（`MAX_ASYNC`）。工作流程描述如下：
 
 1. `MAX_ASYNC` 限制系统中并发 LLM 请求的总数，包括查询、提取和合并的请求。LLM 请求具有不同的优先级：查询操作优先级最高，其次是合并，然后是提取。
 2. `MAX_PARALLEL_INSERT` 控制提取阶段并行处理的文件数量。`MAX_PARALLEL_INSERT`建议设置为2～10之间，通常设置为 `MAX_ASYNC/3`，设置太大会导致合并阶段不同文档之间实体和关系重名的机会增大，降低合并阶段的效率。
@@ -609,7 +609,7 @@ LightRAG 中的文档处理流程有些复杂，分为两个主要阶段：提�
 
 ## 异步文档索引与进度跟踪
 
-LightRAG采用异步文档索引机制，便于前端监控和查询文档处理进度。用户通过指定端点上传文件或插入文本时，系统将返回唯一的跟踪ID，以便实时监控处理进度。
+HybridRAG采用异步文档索引机制，便于前端监控和查询文档处理进度。用户通过指定端点上传文件或插入文本时，系统将返回唯一的跟踪ID，以便实时监控处理进度。
 
 **支持生成跟踪ID的API端点：**
 * `/documents/upload`

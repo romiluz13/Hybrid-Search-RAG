@@ -57,7 +57,7 @@ class ClientManager:
                 )
                 database_name = os.environ.get(
                     "MONGO_DATABASE",
-                    config.get("mongodb", "database", fallback="LightRAG"),
+                    config.get("mongodb", "database", fallback="HybridRAG"),
                 )
                 client = AsyncMongoClient(uri)
                 db = client.get_database(database_name)

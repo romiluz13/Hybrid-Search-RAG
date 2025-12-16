@@ -1,8 +1,8 @@
 """
-Centralized configuration constants for LightRAG.
+Centralized configuration constants for HybridRAG.
 
 This module defines default values for configuration constants used across
-different parts of the LightRAG system. Centralizing these values ensures
+different parts of the HybridRAG system. Centralizing these values ensures
 consistency and makes maintenance easier.
 """
 
@@ -101,11 +101,11 @@ DEFAULT_EMBEDDING_TIMEOUT = 30
 # Logging configuration defaults
 DEFAULT_LOG_MAX_BYTES = 10485760  # Default 10MB
 DEFAULT_LOG_BACKUP_COUNT = 5  # Default 5 backups
-DEFAULT_LOG_FILENAME = "lightrag.log"  # Default log filename
+DEFAULT_LOG_FILENAME = "hybridrag.log"  # Default log filename
 
 # Ollama server configuration defaults
-DEFAULT_OLLAMA_MODEL_NAME = "lightrag"
+DEFAULT_OLLAMA_MODEL_NAME = "hybridrag"
 DEFAULT_OLLAMA_MODEL_TAG = "latest"
 DEFAULT_OLLAMA_MODEL_SIZE = 7365960935
 DEFAULT_OLLAMA_CREATED_AT = "2024-01-15T00:00:00Z"
-DEFAULT_OLLAMA_DIGEST = "sha256:lightrag"
+DEFAULT_OLLAMA_DIGEST = "sha256:hybridrag"

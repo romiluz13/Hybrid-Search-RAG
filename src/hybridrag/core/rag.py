@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
 
 # Internal RAG engine imports (bundled in hybridrag.engine)
-from ..engine import RAGEngine as _RAGEngine
+from ..engine import BaseRAGEngine as _RAGEngine
 from ..engine import QueryParam as _QueryParam
 from ..engine import EmbeddingFunc
 

@@ -4,12 +4,14 @@ HybridRAG Engine - Core RAG functionality.
 This module provides the core RAG engine with MongoDB Atlas storage support.
 """
 
-from .lightrag import LightRAG as RAGEngine
-from .lightrag import QueryParam
-from .lightrag import chunking_by_token_size, chunking_by_docling
+from .base_engine import BaseRAGEngine
+RAGEngine = BaseRAGEngine
+from .base import QueryParam
+from .base_engine import chunking_by_token_size, chunking_by_docling
 from .base import EmbeddingFunc
 
 __all__ = [
+    "BaseRAGEngine",
     "RAGEngine",
     "QueryParam",
     "EmbeddingFunc",

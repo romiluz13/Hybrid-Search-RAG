@@ -1,18 +1,18 @@
 #!/usr/bin/env python
 """
-Start LightRAG server with Gunicorn
+Start HybridRAG server with Gunicorn
 """
 
 import os
 import sys
 import platform
 import pipmaster as pm
-from .api.utils_api import display_splash_screen, check_env_file
-from .api.config import global_args
-from .utils import get_env_value
-from .kg.shared_storage import initialize_share_data
+from .utils_api import display_splash_screen, check_env_file
+from .config import global_args
+from ..utils import get_env_value
+from ..kg.shared_storage import initialize_share_data
 
-from .constants import (
+from ..constants import (
     DEFAULT_WOKERS,
     DEFAULT_TIMEOUT,
 )
@@ -36,12 +36,12 @@ def check_and_install_dependencies():
 
 def main():
     # Explicitly initialize configuration for Gunicorn mode
-    from .api.config import initialize_config
+    from .config import initialize_config
 
     initialize_config()
 
     # Set Gunicorn mode flag for lifespan cleanup detection
-    os.environ["LIGHTRAG_GUNICORN_MODE"] = "1"
+    os.environ["HYBRIDRAG_GUNICORN_MODE"] = "1"
 
     # Check .env file
     if not check_env_file():
@@ -100,12 +100,12 @@ def main():
         print("\nHow to fix:")
         print("  Option 1 - Set environment variable before starting (recommended):")
         print("     export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES")
-        print("     lightrag-gunicorn --workers 2")
+        print("     python -m hybridrag.engine.api.run_with_gunicorn --workers 2")
         print("\n  Option 2 - Add to your shell profile (~/.zshrc or ~/.bash_profile):")
         print("     echo 'export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES' >> ~/.zshrc")
         print("     source ~/.zshrc")
         print("\n  Option 3 - Use single worker mode (no multiprocessing):")
-        print("     lightrag-server --workers 1")
+        print("     python -m hybridrag.engine.api.rag_server --workers 1")
         print("=" * 80 + "\n")
         sys.exit(1)
 
@@ -118,7 +118,7 @@ def main():
     # Display startup information
     display_splash_screen(global_args)
 
-    print("🚀 Starting LightRAG with Gunicorn")
+    print("🚀 Starting HybridRAG with Gunicorn")
     print(f"🔄 Worker management: Gunicorn (workers={global_args.workers})")
     print("🔍 Preloading app: Enabled")
     print("📝 Note: Using Gunicorn's preload feature for shared data initialization")
@@ -257,7 +257,7 @@ def main():
 
         def load(self):
             # Import the application
-            from .api.lightrag_server import get_application
+            from .rag_server import get_application
 
             return get_application(global_args)
 
@@ -268,7 +268,7 @@ def main():
     workers_count = global_args.workers
     if workers_count > 1:
         # Set a flag to indicate we're in the main process
-        os.environ["LIGHTRAG_MAIN_PROCESS"] = "1"
+        os.environ["HYBRIDRAG_MAIN_PROCESS"] = "1"
         initialize_share_data(workers_count)
     else:
         initialize_share_data(1)

@@ -1,5 +1,5 @@
 """
-This module contains all query-related routes for the LightRAG API.
+This module contains all query-related routes for the HybridRAG API.
 """
 
 import json

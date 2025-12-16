@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RAGAS Evaluation Script for LightRAG System
+RAGAS Evaluation Script for HybridRAG System
 
 Evaluates RAG response quality using RAGAS metrics:
 - Faithfulness: Is the answer factually accurate based on context?
@@ -10,23 +10,23 @@ Evaluates RAG response quality using RAGAS metrics:
 
 Usage:
     # Use defaults (sample_dataset.json, http://localhost:9621)
-    python lightrag/evaluation/eval_rag_quality.py
+    python src/hybridrag/engine/evaluation/eval_rag_quality.py
 
     # Specify custom dataset
-    python lightrag/evaluation/eval_rag_quality.py --dataset my_test.json
-    python lightrag/evaluation/eval_rag_quality.py -d my_test.json
+    python src/hybridrag/engine/evaluation/eval_rag_quality.py --dataset my_test.json
+    python src/hybridrag/engine/evaluation/eval_rag_quality.py -d my_test.json
 
     # Specify custom RAG endpoint
-    python lightrag/evaluation/eval_rag_quality.py --ragendpoint http://my-server.com:9621
-    python lightrag/evaluation/eval_rag_quality.py -r http://my-server.com:9621
+    python src/hybridrag/engine/evaluation/eval_rag_quality.py --ragendpoint http://my-server.com:9621
+    python src/hybridrag/engine/evaluation/eval_rag_quality.py -r http://my-server.com:9621
 
     # Specify both
-    python lightrag/evaluation/eval_rag_quality.py -d my_test.json -r http://localhost:9621
+    python src/hybridrag/engine/evaluation/eval_rag_quality.py -d my_test.json -r http://localhost:9621
 
     # Get help
-    python lightrag/evaluation/eval_rag_quality.py --help
+    python src/hybridrag/engine/evaluation/eval_rag_quality.py --help
 
-Results are saved to: lightrag/evaluation/results/
+Results are saved to: src/hybridrag/engine/evaluation/results/
     - results_YYYYMMDD_HHMMSS.csv   (CSV export for analysis)
     - results_YYYYMMDD_HHMMSS.json  (Full results with details)
 
@@ -75,7 +75,7 @@ warnings.filterwarnings(
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # use the .env that is inside the current folder
-# allows to use different .env file for each lightrag instance
+# allows to use different .env file for each hybridrag instance
 # the OS environment variables take precedence over the .env file
 load_dotenv(dotenv_path=".env", override=False)
 
@@ -121,7 +121,7 @@ class RAGEvaluator:
 
         Args:
             test_dataset_path: Path to test dataset JSON file
-            rag_api_url: Base URL of LightRAG API (e.g., http://localhost:9621)
+            rag_api_url: Base URL of HybridRAG API (e.g., http://localhost:9621)
                         If None, will try to read from environment or use default
 
         Environment Variables:
@@ -215,7 +215,7 @@ class RAGEvaluator:
             test_dataset_path = Path(__file__).parent / "sample_dataset.json"
 
         if rag_api_url is None:
-            rag_api_url = os.getenv("LIGHTRAG_API_URL", "http://localhost:9621")
+            rag_api_url = os.getenv("HYBRIDRAG_API_URL", "http://localhost:9621")
 
         self.test_dataset_path = Path(test_dataset_path)
         self.rag_api_url = rag_api_url.rstrip("/")
@@ -274,7 +274,7 @@ class RAGEvaluator:
         logger.info("Test Configuration:")
         logger.info("  • Total Test Cases:     %s", len(self.test_cases))
         logger.info("  • Test Dataset:         %s", self.test_dataset_path.name)
-        logger.info("  • LightRAG API:         %s", self.rag_api_url)
+        logger.info("  • HybridRAG API:         %s", self.rag_api_url)
         logger.info("  • Results Directory:    %s", self.results_dir.name)
 
     def _load_test_dataset(self) -> List[Dict[str, str]]:
@@ -293,7 +293,7 @@ class RAGEvaluator:
         client: httpx.AsyncClient,
     ) -> Dict[str, Any]:
         """
-        Generate RAG response by calling LightRAG API.
+        Generate RAG response by calling HybridRAG API.
 
         Args:
             question: The user query.
@@ -304,7 +304,7 @@ class RAGEvaluator:
             'contexts' is a list of strings (one per retrieved document).
 
         Raises:
-            Exception: If LightRAG API is unavailable.
+            Exception: If HybridRAG API is unavailable.
         """
         try:
             payload = {
@@ -317,7 +317,7 @@ class RAGEvaluator:
             }
 
             # Get API key from environment for authentication
-            api_key = os.getenv("LIGHTRAG_API_KEY")
+            api_key = os.getenv("HYBRIDRAG_API_KEY")
 
             # Prepare headers with optional authentication
             headers = {}
@@ -370,14 +370,14 @@ class RAGEvaluator:
 
         except httpx.ConnectError as e:
             raise Exception(
-                f"❌ Cannot connect to LightRAG API at {self.rag_api_url}\n"
-                f"   Make sure LightRAG server is running:\n"
-                f"   python -m lightrag.api.lightrag_server\n"
+                f"❌ Cannot connect to HybridRAG API at {self.rag_api_url}\n"
+                f"   Make sure HybridRAG server is running:\n"
+                f"   python -m hybridrag.engine.api.rag_server\n"
                 f"   Error: {str(e)}"
             )
         except httpx.HTTPStatusError as e:
             raise Exception(
-                f"LightRAG API error {e.response.status_code}: {e.response.text}"
+                f"HybridRAG API error {e.response.status_code}: {e.response.text}"
             )
         except httpx.ReadTimeout as e:
             raise Exception(
@@ -386,7 +386,7 @@ class RAGEvaluator:
                 f"   Error: {str(e)}"
             )
         except Exception as e:
-            raise Exception(f"Error calling LightRAG API: {type(e).__name__}: {str(e)}")
+            raise Exception(f"Error calling HybridRAG API: {type(e).__name__}: {str(e)}")
 
     async def evaluate_single_case(
         self,
@@ -564,7 +564,7 @@ class RAGEvaluator:
         max_async = int(os.getenv("EVAL_MAX_CONCURRENT", "2"))
 
         logger.info("%s", "=" * 70)
-        logger.info("🚀 Starting RAGAS Evaluation of LightRAG System")
+        logger.info("🚀 Starting RAGAS Evaluation of HybridRAG System")
         logger.info("🔧 RAGAS Evaluation (Stage 2): %s concurrent", max_async)
         logger.info("%s", "=" * 70)
 

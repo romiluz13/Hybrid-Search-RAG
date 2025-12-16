@@ -14,16 +14,16 @@
 | **Context Precision** | Is retrieved context clean without irrelevant noise? | > 0.80 |
 | **RAGAS Score** | Overall quality metric (average of above) | > 0.80 |
 
-### 📁 LightRAG Evalua'tion Framework Directory Structure
+### 📁 HybridRAG Evaluation Framework Directory Structure
 
 ```
-lightrag/evaluation/
+src/hybridrag/engine/evaluation/
 ├── eval_rag_quality.py      # Main evaluation script
-├── sample_dataset.json        # 3 test questions about LightRAG
+├── sample_dataset.json        # 3 test questions about HybridRAG
 ├── sample_documents/          # Matching markdown files for testing
-│   ├── 01_lightrag_overview.md
+│   ├── 01_hybridrag_overview.md
 │   ├── 02_rag_architecture.md
-│   ├── 03_lightrag_improvements.md
+│   ├── 03_hybridrag_improvements.md
 │   ├── 04_supported_databases.md
 │   ├── 05_evaluation_and_deployment.md
 │   └── README.md
@@ -34,7 +34,7 @@ lightrag/evaluation/
 └── README.md                # This file
 ```
 
-**Quick Test:** Index files from `sample_documents/` into LightRAG, then run the evaluator to reproduce results (~89-100% RAGAS score per question).
+**Quick Test:** Index files from `sample_documents/` into HybridRAG, then run the evaluator to reproduce results (~89-100% RAGAS score per question).
 
 
 
@@ -56,33 +56,33 @@ pip install -e ".[evaluation]"
 
 **Basic usage (uses defaults):**
 ```bash
-cd /path/to/LightRAG
-python lightrag/evaluation/eval_rag_quality.py
+cd /path/to/HybridRAG
+python src/hybridrag/engine/evaluation/eval_rag_quality.py
 ```
 
 **Specify custom dataset:**
 ```bash
-python lightrag/evaluation/eval_rag_quality.py --dataset my_test.json
+python src/hybridrag/engine/evaluation/eval_rag_quality.py --dataset my_test.json
 ```
 
 **Specify custom RAG endpoint:**
 ```bash
-python lightrag/evaluation/eval_rag_quality.py --ragendpoint http://my-server.com:9621
+python src/hybridrag/engine/evaluation/eval_rag_quality.py --ragendpoint http://my-server.com:9621
 ```
 
 **Specify both (short form):**
 ```bash
-python lightrag/evaluation/eval_rag_quality.py -d my_test.json -r http://localhost:9621
+python src/hybridrag/engine/evaluation/eval_rag_quality.py -d my_test.json -r http://localhost:9621
 ```
 
 **Get help:**
 ```bash
-python lightrag/evaluation/eval_rag_quality.py --help
+python src/hybridrag/engine/evaluation/eval_rag_quality.py --help
 ```
 
 ### 3. View Results
 
-Results are saved automatically in `lightrag/evaluation/results/`:
+Results are saved automatically in `src/hybridrag/engine/evaluation/results/`:
 
 ```
 results/
@@ -105,38 +105,38 @@ The evaluation script supports command-line arguments for easy configuration:
 | Argument | Short | Default | Description |
 |----------|-------|---------|-------------|
 | `--dataset` | `-d` | `sample_dataset.json` | Path to test dataset JSON file |
-| `--ragendpoint` | `-r` | `http://localhost:9621` or `$LIGHTRAG_API_URL` | LightRAG API endpoint URL |
+| `--ragendpoint` | `-r` | `http://localhost:9621` or `$HYBRIDRAG_API_URL` | HybridRAG API endpoint URL |
 
 ### Usage Examples
 
 **Use default dataset and endpoint:**
 ```bash
-python lightrag/evaluation/eval_rag_quality.py
+python src/hybridrag/engine/evaluation/eval_rag_quality.py
 ```
 
 **Custom dataset with default endpoint:**
 ```bash
-python lightrag/evaluation/eval_rag_quality.py --dataset path/to/my_dataset.json
+python src/hybridrag/engine/evaluation/eval_rag_quality.py --dataset path/to/my_dataset.json
 ```
 
 **Default dataset with custom endpoint:**
 ```bash
-python lightrag/evaluation/eval_rag_quality.py --ragendpoint http://my-server.com:9621
+python src/hybridrag/engine/evaluation/eval_rag_quality.py --ragendpoint http://my-server.com:9621
 ```
 
 **Custom dataset and endpoint:**
 ```bash
-python lightrag/evaluation/eval_rag_quality.py -d my_dataset.json -r http://localhost:9621
+python src/hybridrag/engine/evaluation/eval_rag_quality.py -d my_dataset.json -r http://localhost:9621
 ```
 
 **Absolute path to dataset:**
 ```bash
-python lightrag/evaluation/eval_rag_quality.py -d /path/to/custom_dataset.json
+python src/hybridrag/engine/evaluation/eval_rag_quality.py -d /path/to/custom_dataset.json
 ```
 
 **Show help message:**
 ```bash
-python lightrag/evaluation/eval_rag_quality.py --help
+python src/hybridrag/engine/evaluation/eval_rag_quality.py --help
 ```
 
 
@@ -173,7 +173,7 @@ The evaluation framework supports customization through environment variables:
 **Example 1: Default Configuration (OpenAI Official API)**
 ```bash
 export OPENAI_API_KEY=sk-xxx
-python lightrag/evaluation/eval_rag_quality.py
+python src/hybridrag/engine/evaluation/eval_rag_quality.py
 ```
 Both LLM and embeddings use OpenAI's official API with default models.
 
@@ -182,7 +182,7 @@ Both LLM and embeddings use OpenAI's official API with default models.
 export OPENAI_API_KEY=sk-xxx
 export EVAL_LLM_MODEL=gpt-4o-mini
 export EVAL_EMBEDDING_MODEL=text-embedding-3-large
-python lightrag/evaluation/eval_rag_quality.py
+python src/hybridrag/engine/evaluation/eval_rag_quality.py
 ```
 
 **Example 3: Same Custom OpenAI-Compatible Endpoint for Both**
@@ -192,7 +192,7 @@ export EVAL_LLM_BINDING_API_KEY=your-custom-key
 export EVAL_LLM_BINDING_HOST=http://localhost:8000/v1
 export EVAL_LLM_MODEL=qwen-plus
 export EVAL_EMBEDDING_MODEL=BAAI/bge-m3
-python lightrag/evaluation/eval_rag_quality.py
+python src/hybridrag/engine/evaluation/eval_rag_quality.py
 ```
 Embeddings automatically inherit LLM endpoint configuration.
 
@@ -208,7 +208,7 @@ export EVAL_EMBEDDING_BINDING_API_KEY=local-key
 export EVAL_EMBEDDING_BINDING_HOST=http://localhost:8001/v1
 export EVAL_EMBEDDING_MODEL=BAAI/bge-m3
 
-python lightrag/evaluation/eval_rag_quality.py
+python src/hybridrag/engine/evaluation/eval_rag_quality.py
 ```
 LLM uses OpenAI official API, embeddings use local custom endpoint.
 
@@ -224,7 +224,7 @@ export EVAL_EMBEDDING_BINDING_API_KEY=key2
 export EVAL_EMBEDDING_BINDING_HOST=http://embedding-server:8001/v1
 export EVAL_EMBEDDING_MODEL=custom-embedding
 
-python lightrag/evaluation/eval_rag_quality.py
+python src/hybridrag/engine/evaluation/eval_rag_quality.py
 ```
 Both use different custom OpenAI-compatible endpoints.
 
@@ -239,7 +239,7 @@ EVAL_EMBEDDING_MODEL=BAAI/bge-m3
 EOF
 
 # Run evaluation (automatically loads .env)
-python lightrag/evaluation/eval_rag_quality.py
+python src/hybridrag/engine/evaluation/eval_rag_quality.py
 ```
 
 ### Concurrency Control & Rate Limiting
@@ -254,7 +254,7 @@ The evaluation framework includes built-in concurrency control to prevent API ra
 **Default Configuration (Conservative):**
 ```bash
 EVAL_MAX_CONCURRENT=2    # Serial evaluation (one test at a time)
-EVAL_QUERY_TOP_K=10      # OP_K query parameter of LightRAG
+EVAL_QUERY_TOP_K=10      # OP_K query parameter of HybridRAG
 EVAL_LLM_MAX_RETRIES=5   # Retry failed requests 5 times
 EVAL_LLM_TIMEOUT=180     # 3-minute timeout per request
 ```
@@ -272,7 +272,7 @@ EVAL_LLM_TIMEOUT=180     # 3-minute timeout per request
 
 ## 📝 Test Dataset
 
-`sample_dataset.json` contains 3 generic questions about LightRAG. Replace with questions matching YOUR indexed documents.
+`sample_dataset.json` contains 3 generic questions about HybridRAG. Replace with questions matching YOUR indexed documents.
 
 **Custom Test Cases:**
 
@@ -359,20 +359,20 @@ pip install ragas datasets
 1. **Serial Evaluation** (Default):
    ```bash
    export EVAL_MAX_CONCURRENT=1
-   python lightrag/evaluation/eval_rag_quality.py
+   python src/hybridrag/engine/evaluation/eval_rag_quality.py
    ```
 
 2. **Reduce Retrieved Documents**:
    ```bash
    export EVAL_QUERY_TOP_K=5  # Halves Context Precision LLM calls
-   python lightrag/evaluation/eval_rag_quality.py
+   python src/hybridrag/engine/evaluation/eval_rag_quality.py
    ```
 
 3. **Increase Retry & Timeout**:
    ```bash
    export EVAL_LLM_MAX_RETRIES=10
    export EVAL_LLM_TIMEOUT=180
-   python lightrag/evaluation/eval_rag_quality.py
+   python src/hybridrag/engine/evaluation/eval_rag_quality.py
    ```
 
 4. **Use Higher Quota API** (if available):
@@ -396,37 +396,37 @@ The framework will automatically configure the evaluation models.
 Make sure you're running from the project root:
 
 ```bash
-cd /path/to/LightRAG
-python lightrag/evaluation/eval_rag_quality.py
+cd /path/to/HybridRAG
+python src/hybridrag/engine/evaluation/eval_rag_quality.py
 ```
 
-### "LightRAG query API errors during evaluation"
+### "HybridRAG query API errors during evaluation"
 
 The evaluation uses your configured LLM (OpenAI by default). Ensure:
 - API keys are set in `.env`
 - Network connection is stable
 
-### Evaluation requires running LightRAG API
+### Evaluation requires running HybridRAG API
 
-The evaluator queries a running LightRAG API server at `http://localhost:9621`. Make sure:
-1. LightRAG API server is running (`python lightrag/api/lightrag_server.py`)
-2. Documents are indexed in your LightRAG instance
+The evaluator queries a running HybridRAG API server at `http://localhost:9621`. Make sure:
+1. HybridRAG API server is running (`python -m hybridrag.engine.api.rag_server`)
+2. Documents are indexed in your HybridRAG instance
 3. API is accessible at the configured URL
 
 
 
 ## 📝 Next Steps
 
-1. Start LightRAG API server
-2. Upload sample documents into LightRAG  throught  WebUI
-3. Run `python lightrag/evaluation/eval_rag_quality.py`
+1. Start HybridRAG API server
+2. Upload sample documents into HybridRAG  throught  WebUI
+3. Run `python src/hybridrag/engine/evaluation/eval_rag_quality.py`
 4. Review results (JSON/CSV) in `results/` folder
 
 Evaluation Result Sample:
 
 ```
 INFO: ======================================================================
-INFO: 🔍 RAGAS Evaluation - Using Real LightRAG API
+INFO: 🔍 RAGAS Evaluation - Using Real HybridRAG API
 INFO: ======================================================================
 INFO: Evaluation Models:
 INFO:   • LLM Model:            gpt-4.1
@@ -439,10 +439,10 @@ INFO:   • LLM Timeout:          180 seconds
 INFO: Test Configuration:
 INFO:   • Total Test Cases:     6
 INFO:   • Test Dataset:         sample_dataset.json
-INFO:   • LightRAG API:         http://localhost:9621
+INFO:   • HybridRAG API:         http://localhost:9621
 INFO:   • Results Directory:    results
 INFO: ======================================================================
-INFO: 🚀 Starting RAGAS Evaluation of LightRAG System
+INFO: 🚀 Starting RAGAS Evaluation of HybridRAG System
 INFO: 🔧 RAGAS Evaluation (Stage 2): 2 concurrent
 INFO: ======================================================================
 INFO:
@@ -451,12 +451,12 @@ INFO: 📊 EVALUATION RESULTS SUMMARY
 INFO: ===================================================================================================================
 INFO: #    | Question                                           |  Faith | AnswRel | CtxRec | CtxPrec |  RAGAS | Status
 INFO: -------------------------------------------------------------------------------------------------------------------
-INFO: 1    | How does LightRAG solve the hallucination probl... | 1.0000 |  1.0000 | 1.0000 |  1.0000 | 1.0000 |      ✓
+INFO: 1    | How does HybridRAG solve the hallucination probl... | 1.0000 |  1.0000 | 1.0000 |  1.0000 | 1.0000 |      ✓
 INFO: 2    | What are the three main components required in ... | 0.8500 |  0.5790 | 1.0000 |  1.0000 | 0.8573 |      ✓
-INFO: 3    | How does LightRAG's retrieval performance compa... | 0.8056 |  1.0000 | 1.0000 |  1.0000 | 0.9514 |      ✓
-INFO: 4    | What vector databases does LightRAG support and... | 0.8182 |  0.9807 | 1.0000 |  1.0000 | 0.9497 |      ✓
+INFO: 3    | How does HybridRAG's retrieval performance compa... | 0.8056 |  1.0000 | 1.0000 |  1.0000 | 0.9514 |      ✓
+INFO: 4    | What vector databases does HybridRAG support and... | 0.8182 |  0.9807 | 1.0000 |  1.0000 | 0.9497 |      ✓
 INFO: 5    | What are the four key metrics for evaluating RA... | 1.0000 |  0.7452 | 1.0000 |  1.0000 | 0.9363 |      ✓
-INFO: 6    | What are the core benefits of LightRAG and how ... | 0.9583 |  0.8829 | 1.0000 |  1.0000 | 0.9603 |      ✓
+INFO: 6    | What are the core benefits of HybridRAG and how ... | 0.9583 |  0.8829 | 1.0000 |  1.0000 | 0.9603 |      ✓
 INFO: ===================================================================================================================
 INFO:
 INFO: ======================================================================

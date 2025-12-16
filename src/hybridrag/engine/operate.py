@@ -70,7 +70,7 @@ import time
 from dotenv import load_dotenv
 
 # use the .env that is inside the current folder
-# allows to use different .env file for each lightrag instance
+# allows to use different .env file for each hybridrag instance
 # the OS environment variables take precedence over the .env file
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=False)
 
@@ -147,10 +147,10 @@ def chunking_by_docling(
         chunks = chunker.chunk_text_sync(
             content=content,
             title="document",
-            source="lightrag",
+            source="hybridrag",
         )
 
-        # Convert to LightRAG format
+        # Convert to HybridRAG format
         results = []
         for chunk in chunks:
             results.append({

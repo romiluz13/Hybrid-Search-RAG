@@ -1,5 +1,5 @@
 """
-LightRAG FastAPI Server
+HybridRAG FastAPI Server
 """
 
 from fastapi import FastAPI, Depends, HTTPException, Request
@@ -34,7 +34,7 @@ from .config import (
     get_default_host,
 )
 from .utils import get_env_value
-from . import LightRAG, __version__ as core_version
+from . import RAGEngine, __version__ as core_version
 from .api import __api_version__
 from .types import GPTKeywordExtractionFormat
 from .utils import EmbeddingFunc
@@ -176,7 +176,7 @@ def check_frontend_build():
         ASCIIColors.yellow(
             "\nTo enable WebUI, build the frontend using these commands:\n"
         )
-        ASCIIColors.cyan("    cd lightrag_webui")
+        ASCIIColors.cyan("    cd webui")
         ASCIIColors.cyan("    bun install --frozen-lockfile")
         ASCIIColors.cyan("    bun run build")
         ASCIIColors.cyan("    cd ..")
@@ -267,7 +267,7 @@ def check_frontend_build():
             ASCIIColors.cyan(
                 "Recommended: Rebuild the frontend to use the latest changes:"
             )
-            ASCIIColors.cyan("    cd lightrag_webui")
+        ASCIIColors.cyan("    cd webui")
             ASCIIColors.cyan("    bun install --frozen-lockfile")
             ASCIIColors.cyan("    bun run build")
             ASCIIColors.cyan("    cd ..")
@@ -341,7 +341,7 @@ def create_app(args):
             raise Exception(f"SSL key file not found: {args.ssl_keyfile}")
 
     # Check if API key is provided either through env var or args
-    api_key = os.getenv("LIGHTRAG_API_KEY") or args.key
+    api_key = os.getenv("HYBRIDRAG_API_KEY") or args.key
 
     # Initialize document manager with workspace support for data isolation
     doc_manager = DocumentManager(args.input_dir, workspace=args.workspace)
@@ -368,7 +368,7 @@ def create_app(args):
             # Clean up database connections
             await rag.finalize_storages()
 
-            if "LIGHTRAG_GUNICORN_MODE" not in os.environ:
+            if "HYBRIDRAG_GUNICORN_MODE" not in os.environ:
                 # Only perform cleanup in Uvicorn single-process mode
                 logger.debug("Unvicorn Mode: finalizing shared storage...")
                 finalize_share_data()
@@ -380,7 +380,7 @@ def create_app(args):
 
     # Initialize FastAPI
     base_description = (
-        "Providing API for LightRAG core, Web UI and Ollama Model Emulation"
+        "Providing API for HybridRAG core, Web UI and Ollama Model Emulation"
     )
     swagger_description = (
         base_description
@@ -388,7 +388,7 @@ def create_app(args):
         + "\n\n[View ReDoc documentation](/redoc)"
     )
     app_kwargs = {
-        "title": "LightRAG Server API",
+        "title": "HybridRAG Server API",
         "description": swagger_description,
         "version": __api_version__,
         "openapi_url": "/openapi.json",  # Explicitly set OpenAPI schema URL

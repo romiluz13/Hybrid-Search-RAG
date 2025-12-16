@@ -128,8 +128,8 @@ config.read("config.ini", "utf-8")
 
 @final
 @dataclass
-class LightRAG:
-    """LightRAG: Simple and Fast Retrieval-Augmented Generation."""
+class BaseRAGEngine:
+    """BaseRAGEngine: Simple and Fast Retrieval-Augmented Generation."""
 
     # Directory
     # ---
@@ -429,9 +429,9 @@ class LightRAG:
     # Storages Management
     # ---
 
-    # TODO: Deprecated (LightRAG will never initialize storage automatically on creation，and finalize should be call before destroying)
+    # TODO: Deprecated (BaseRAGEngine will never initialize storage automatically on creation，and finalize should be call before destroying)
     auto_manage_storages_states: bool = field(default=False)
-    """If True, lightrag will automatically calls initialize_storages and finalize_storages at the appropriate times."""
+    """If True, engine will automatically calls initialize_storages and finalize_storages at the appropriate times."""
 
     cosine_better_than_threshold: float = field(
         default=float(os.getenv("COSINE_THRESHOLD", 0.2))
@@ -523,7 +523,7 @@ class LightRAG:
         global_config = asdict(self)
 
         _print_config = ",\n  ".join([f"{k} = {v}" for k, v in global_config.items()])
-        logger.debug(f"LightRAG init with param:\n  {_print_config}\n")
+        logger.debug(f"BaseRAGEngine init with param:\n  {_print_config}\n")
 
         # Init Embedding
         # Step 1: Capture max_token_size before applying decorator (decorator strips dataclass attributes)
@@ -669,7 +669,7 @@ class LightRAG:
                 set_default_workspace(self.workspace)
             elif default_workspace != self.workspace:
                 logger.info(
-                    f"Creating LightRAG instance with workspace='{self.workspace}' "
+                    f"Creating BaseRAGEngine instance with workspace='{self.workspace}' "
                     f"while default workspace is set to '{default_workspace}'"
                 )
 

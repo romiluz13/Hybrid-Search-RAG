@@ -74,7 +74,7 @@ async def anthropic_complete_if_cache(
         api_key = os.environ.get("ANTHROPIC_API_KEY")
 
     default_headers = {
-        "User-Agent": f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_8) LightRAG/{__api_version__}",
+        "User-Agent": f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_8) HybridRAG/{__api_version__}",
         "Content-Type": "application/json",
     }
 

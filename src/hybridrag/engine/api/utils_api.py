@@ -1,5 +1,5 @@
 """
-Utility functions for the LightRAG API.
+Utility functions for the HybridRAG API.
 """
 
 import os
@@ -168,7 +168,7 @@ def get_combined_auth_dependency(api_key: Optional[str] = None):
 
 def display_splash_screen(args: argparse.Namespace) -> None:
     """
-    Display a colorful splash screen showing LightRAG server configuration
+    Display a colorful splash screen showing HybridRAG server configuration
 
     Args:
         args: Parsed command line arguments
@@ -179,7 +179,7 @@ def display_splash_screen(args: argparse.Namespace) -> None:
     bottom_border = "╚══════════════════════════════════════════════════════════════╝"
     width = len(top_border) - 4  # width inside the borders
 
-    line1_text = f"LightRAG Server v{core_version}/{api_version}"
+    line1_text = f"HybridRAG Server v{core_version}/{api_version}"
     line2_text = "Fast, Lightweight RAG Server Implementation"
 
     line1 = f"║ {line1_text.center(width)} ║"
@@ -213,7 +213,7 @@ def display_splash_screen(args: argparse.Namespace) -> None:
         ASCIIColors.white("    ├─ SSL Key: ", end="")
         ASCIIColors.yellow(f"{args.ssl_keyfile}")
     ASCIIColors.white("    ├─ Ollama Emulating Model: ", end="")
-    ASCIIColors.yellow(f"{ollama_server_infos.LIGHTRAG_MODEL}")
+    ASCIIColors.yellow(f"{ollama_server_infos.HYBRIDRAG_MODEL}")
     ASCIIColors.white("    ├─ Log Level: ", end="")
     ASCIIColors.yellow(f"{args.log_level}")
     ASCIIColors.white("    ├─ Verbose Debug: ", end="")

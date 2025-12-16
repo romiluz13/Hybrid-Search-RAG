@@ -8,13 +8,15 @@ import re
 from enum import Enum
 from fastapi.responses import StreamingResponse
 import asyncio
-from . import LightRAG, QueryParam
+import asyncio
+from ...base_engine import BaseRAGEngine as RAGEngine
+from ...base import QueryParam
 from .utils import TiktokenTokenizer
-from .api.utils_api import get_combined_auth_dependency
+from .utils_api import get_combined_auth_dependency
 from fastapi import Depends
 
 
-# query mode according to query prefix (bypass is not LightRAG quer mode)
+# query mode according to query prefix (bypass is not HybridRAG query mode)
 class SearchMode(str, Enum):
     naive = "naive"
     local = "local"
@@ -218,7 +220,7 @@ def parse_query_mode(query: str) -> tuple[str, SearchMode, bool, Optional[str]]:
 
 
 class OllamaAPI:
-    def __init__(self, rag: LightRAG, top_k: int = 60, api_key: Optional[str] = None):
+    def __init__(self, rag: RAGEngine, top_k: int = 60, api_key: Optional[str] = None):
         self.rag = rag
         self.ollama_server_infos = rag.ollama_server_infos
         self.top_k = top_k
@@ -241,16 +243,16 @@ class OllamaAPI:
             return OllamaTagResponse(
                 models=[
                     {
-                        "name": self.ollama_server_infos.LIGHTRAG_MODEL,
-                        "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                        "modified_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
-                        "size": self.ollama_server_infos.LIGHTRAG_SIZE,
-                        "digest": self.ollama_server_infos.LIGHTRAG_DIGEST,
+                        "name": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                        "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                        "modified_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
+                        "size": self.ollama_server_infos.HYBRIDRAG_SIZE,
+                        "digest": self.ollama_server_infos.HYBRIDRAG_DIGEST,
                         "details": {
                             "parent_model": "",
                             "format": "gguf",
-                            "family": self.ollama_server_infos.LIGHTRAG_NAME,
-                            "families": [self.ollama_server_infos.LIGHTRAG_NAME],
+                            "family": self.ollama_server_infos.HYBRIDRAG_NAME,
+                            "families": [self.ollama_server_infos.HYBRIDRAG_NAME],
                             "parameter_size": "13B",
                             "quantization_level": "Q4_0",
                         },
@@ -264,10 +266,10 @@ class OllamaAPI:
             return OllamaPsResponse(
                 models=[
                     {
-                        "name": self.ollama_server_infos.LIGHTRAG_MODEL,
-                        "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                        "size": self.ollama_server_infos.LIGHTRAG_SIZE,
-                        "digest": self.ollama_server_infos.LIGHTRAG_DIGEST,
+                        "name": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                        "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                        "size": self.ollama_server_infos.HYBRIDRAG_SIZE,
+                        "digest": self.ollama_server_infos.HYBRIDRAG_DIGEST,
                         "details": {
                             "parent_model": "",
                             "format": "gguf",
@@ -277,7 +279,7 @@ class OllamaAPI:
                             "quantization_level": "Q4_0",
                         },
                         "expires_at": "2050-12-31T14:38:31.83753-07:00",
-                        "size_vram": self.ollama_server_infos.LIGHTRAG_SIZE,
+                        "size_vram": self.ollama_server_infos.HYBRIDRAG_SIZE,
                     }
                 ]
             )
@@ -287,7 +289,7 @@ class OllamaAPI:
         )
         async def generate(raw_request: Request):
             """Handle generate completion requests acting as an Ollama model
-            For compatibility purpose, the request is not processed by LightRAG,
+            For compatibility purpose, the request is not processed by HybridRAG,
             and will be handled by underlying LLM model.
             Supports both application/json and application/octet-stream Content-Types.
             """
@@ -320,8 +322,8 @@ class OllamaAPI:
                             total_response = response
 
                             data = {
-                                "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                 "response": response,
                                 "done": False,
                             }
@@ -333,8 +335,8 @@ class OllamaAPI:
                             eval_time = last_chunk_time - first_chunk_time
 
                             data = {
-                                "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                 "response": "",
                                 "done": True,
                                 "done_reason": "stop",
@@ -358,8 +360,8 @@ class OllamaAPI:
 
                                         total_response += chunk
                                         data = {
-                                            "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                            "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                            "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                            "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                             "response": chunk,
                                             "done": False,
                                         }
@@ -375,8 +377,8 @@ class OllamaAPI:
 
                                 # Send error message to client
                                 error_data = {
-                                    "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                    "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                    "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                    "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                     "response": f"\n\nError: {error_msg}",
                                     "error": f"\n\nError: {error_msg}",
                                     "done": False,
@@ -385,8 +387,8 @@ class OllamaAPI:
 
                                 # Send final message to close the stream
                                 final_data = {
-                                    "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                    "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                    "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                    "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                     "response": "",
                                     "done": True,
                                 }
@@ -400,8 +402,8 @@ class OllamaAPI:
                             eval_time = last_chunk_time - first_chunk_time
 
                             data = {
-                                "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                 "response": "",
                                 "done": True,
                                 "done_reason": "stop",
@@ -442,8 +444,8 @@ class OllamaAPI:
                     eval_time = last_chunk_time - first_chunk_time
 
                     return {
-                        "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                        "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                        "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                        "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                         "response": str(response_text),
                         "done": True,
                         "done_reason": "stop",
@@ -464,7 +466,7 @@ class OllamaAPI:
         )
         async def chat(raw_request: Request):
             """Process chat completion requests by acting as an Ollama model.
-            Routes user queries through LightRAG by selecting query mode based on query prefix.
+            Routes user queries through HybridRAG by selecting query mode based on query prefix.
             Detects and forwards OpenWebUI session-related requests (for meta data generation task) directly to LLM.
             Supports both application/json and application/octet-stream Content-Types.
             """
@@ -541,8 +543,8 @@ class OllamaAPI:
                             total_response = response
 
                             data = {
-                                "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                 "message": {
                                     "role": "assistant",
                                     "content": response,
@@ -558,8 +560,8 @@ class OllamaAPI:
                             eval_time = last_chunk_time - first_chunk_time
 
                             data = {
-                                "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                 "message": {
                                     "role": "assistant",
                                     "content": "",
@@ -586,8 +588,8 @@ class OllamaAPI:
 
                                         total_response += chunk
                                         data = {
-                                            "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                            "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                            "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                            "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                             "message": {
                                                 "role": "assistant",
                                                 "content": chunk,
@@ -607,8 +609,8 @@ class OllamaAPI:
 
                                 # Send error message to client
                                 error_data = {
-                                    "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                    "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                    "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                    "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                     "message": {
                                         "role": "assistant",
                                         "content": f"\n\nError: {error_msg}",
@@ -621,8 +623,8 @@ class OllamaAPI:
 
                                 # Send final message to close the stream
                                 final_data = {
-                                    "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                    "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                    "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                    "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                     "message": {
                                         "role": "assistant",
                                         "content": "",
@@ -641,8 +643,8 @@ class OllamaAPI:
                             eval_time = last_chunk_time - first_chunk_time
 
                             data = {
-                                "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                                "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                                "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                                "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                                 "message": {
                                     "role": "assistant",
                                     "content": "",
@@ -702,8 +704,8 @@ class OllamaAPI:
                     eval_time = last_chunk_time - first_chunk_time
 
                     return {
-                        "model": self.ollama_server_infos.LIGHTRAG_MODEL,
-                        "created_at": self.ollama_server_infos.LIGHTRAG_CREATED_AT,
+                        "model": self.ollama_server_infos.HYBRIDRAG_MODEL,
+                        "created_at": self.ollama_server_infos.HYBRIDRAG_CREATED_AT,
                         "message": {
                             "role": "assistant",
                             "content": str(response_text),

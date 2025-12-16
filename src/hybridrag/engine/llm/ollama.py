@@ -83,7 +83,7 @@ async def _ollama_model_if_cache(
         api_key = os.getenv("OLLAMA_API_KEY")
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": f"LightRAG/{__api_version__}",
+        "User-Agent": f"HybridRAG/{__api_version__}",
     }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -181,7 +181,7 @@ async def ollama_embed(
         api_key = os.getenv("OLLAMA_API_KEY")
     headers = {
         "Content-Type": "application/json",
-        "User-Agent": f"LightRAG/{__api_version__}",
+        "User-Agent": f"HybridRAG/{__api_version__}",
     }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"

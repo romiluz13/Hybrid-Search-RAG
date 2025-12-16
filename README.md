@@ -1,13 +1,17 @@
-# HybridRAG
+# HybridRAG: State-of-the-Art RAG with MongoDB
 
-State-of-the-art Retrieval-Augmented Generation (RAG) system powered by MongoDB Atlas and Voyage AI.
+## Acknowledgements
 
-## Features
+This project builds upon the excellent work of the open-source community in GraphRAG and Retrieval-Augmented Generation. We extend our gratitude to the original researchers and developers who paved the way for efficient RAG systems.
 
-- **MongoDB Atlas Storage** - Unified vector, graph, and key-value storage
-- **Voyage AI Embeddings** - High-quality embeddings with voyage-3-large (1024 dimensions)
-- **Voyage AI Reranking** - Precision reranking with rerank-2.5
-- **Multi-Provider LLM Support** - Claude, GPT-4, and Gemini
+This project enhances the RAG engine with:
+- **MongoDB Atlas** for storage (Graph + Vector + Key-Value).
+- **Voyage AI** for high-quality embeddings and reranking.
+- **Multiple LLM Support**: Gemini, Claude, OpenAI.
+- **Improved Caching**: Intelligent caching for LLM responses and embeddings.
+- **Implicit Expansion**: Automatically discovering related entities.
+
+This is a production-ready implementation of GraphRAG concepts, built on top of a highly optimized base engine.
 - **Knowledge Graph Construction** - Automatic entity and relationship extraction
 - **Entity Boosting** - Enhanced retrieval through entity-aware reranking
 - **Implicit Semantic Expansion** - Find related concepts via vector similarity

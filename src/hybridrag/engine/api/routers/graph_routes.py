@@ -1,5 +1,5 @@
 """
-This module contains all graph-related routes for the LightRAG API.
+This module contains all graph-related routes for the HybridRAG API.
 """
 
 from typing import Optional, Dict, Any

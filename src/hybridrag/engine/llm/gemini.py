@@ -1,8 +1,8 @@
 """
-Gemini LLM binding for LightRAG.
+Gemini LLM binding for HybridRAG.
 
 This module provides asynchronous helpers that adapt Google's Gemini models
-to the same interface used by the rest of the LightRAG LLM bindings. The
+to the same interface used by the rest of the HybridRAG LLM bindings. The
 implementation mirrors the OpenAI helpers while relying on the official
 ``google-genai`` client under the hood.
 """

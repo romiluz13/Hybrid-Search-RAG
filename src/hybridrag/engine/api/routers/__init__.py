@@ -1,5 +1,5 @@
 """
-This module contains all the routers for the LightRAG API.
+This module contains all the routers for the HybridRAG API.
 """
 
 from .document_routes import router as document_router

@@ -63,7 +63,7 @@ except ImportError:
     logger.debug("Langfuse not available, using standard OpenAI client")
 
 # use the .env that is inside the current folder
-# allows to use different .env file for each lightrag instance
+# allows to use different .env file for each hybridrag instance
 # the OS environment variables take precedence over the .env file
 load_dotenv(dotenv_path=".env", override=False)
 
@@ -132,7 +132,7 @@ def create_openai_async_client(
             api_key = os.environ["OPENAI_API_KEY"]
 
         default_headers = {
-            "User-Agent": f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_8) LightRAG/{__api_version__}",
+            "User-Agent": f"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_8) HybridRAG/{__api_version__}",
             "Content-Type": "application/json",
         }
 

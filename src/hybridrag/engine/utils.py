@@ -72,7 +72,7 @@ class SafeStreamHandler(logging.StreamHandler):
 
 
 # Initialize logger with basic configuration
-logger = logging.getLogger("lightrag")
+logger = logging.getLogger("hybridrag")
 logger.propagate = False  # prevent log message send to root logger
 logger.setLevel(logging.INFO)
 
@@ -96,7 +96,7 @@ def _patch_ascii_colors_console_handler() -> None:
     except ImportError:
         return
 
-    if getattr(ConsoleHandler, "_lightrag_patched", False):
+    if getattr(ConsoleHandler, "_hybridrag_patched", False):
         return
 
     original_handle_error = ConsoleHandler.handle_error
@@ -108,7 +108,7 @@ def _patch_ascii_colors_console_handler() -> None:
         original_handle_error(self, message)
 
     ConsoleHandler.handle_error = _safe_handle_error  # type: ignore[assignment]
-    ConsoleHandler._lightrag_patched = True  # type: ignore[attr-defined]
+    ConsoleHandler._hybridrag_patched = True  # type: ignore[attr-defined]
 
 
 _patch_ascii_colors_console_handler()
@@ -229,7 +229,7 @@ if TYPE_CHECKING:
     from .base import BaseKVStorage, BaseVectorStorage, QueryParam
 
 # use the .env that is inside the current folder
-# allows to use different .env file for each lightrag instance
+# allows to use different .env file for each hybridrag instance
 # the OS environment variables take precedence over the .env file
 load_dotenv(dotenv_path=".env", override=False)
 
@@ -272,8 +272,8 @@ def set_verbose_debug(enabled: bool):
 statistic_data = {"llm_call": 0, "llm_cache": 0, "embed_call": 0}
 
 
-class LightragPathFilter(logging.Filter):
-    """Filter for lightrag logger to filter out frequent path access logs"""
+class HybridRagPathFilter(logging.Filter):
+    """Filter for hybridrag logger to filter out frequent path access logs"""
 
     def __init__(self):
         super().__init__()
@@ -326,8 +326,8 @@ def setup_logger(
     Args:
         logger_name: Name of the logger to set up
         level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        add_filter: Whether to add LightragPathFilter to the logger
-        log_file_path: Path to the log file. If None and file logging is enabled, defaults to lightrag.log in LOG_DIR or cwd
+        add_filter: Whether to add HybridRagPathFilter to the logger
+        log_file_path: Path to the log file. If None and file logging is enabled, defaults to hybridrag.log in LOG_DIR or cwd
         enable_file_logging: Whether to enable logging to a file (defaults to True)
     """
     # Configure formatters
@@ -380,7 +380,7 @@ def setup_logger(
 
     # Add path filter if requested
     if add_filter:
-        path_filter = LightragPathFilter()
+        path_filter = HybridRagPathFilter()
         logger_instance.addFilter(path_filter)
 
 

@@ -23,11 +23,11 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from . import LightRAG
+from hybridrag.engine.base_engine import BaseRAGEngine
 from .base import StoragesStatus
 
 
-async def check_lightrag_setup(rag_instance: LightRAG, verbose: bool = False) -> bool:
+async def check_lightrag_setup(rag_instance: BaseRAGEngine, verbose: bool = False) -> bool:
     """
     Check if a LightRAG instance is properly initialized.
 
@@ -138,7 +138,7 @@ async def demo():
     print("=" * 50)
 
     # Create test instance
-    rag = LightRAG(
+    rag = BaseRAGEngine(
         working_dir="./test_diagnostic",
         embedding_func=openai_embed,
         llm_model_func=gpt_4o_mini_complete,

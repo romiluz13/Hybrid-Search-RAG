@@ -1,5 +1,5 @@
 """
-This module contains all document-related routes for the LightRAG API.
+This module contains all document-related routes for the HybridRAG API.
 """
 
 import asyncio
@@ -22,7 +22,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field, field_validator
 
-from . import LightRAG
+from ...base_engine import BaseRAGEngine as RAGEngine
 from .base import DeletionResult, DocProcessingStatus, DocStatus
 from .utils import (
     generate_track_id,

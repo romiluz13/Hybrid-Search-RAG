@@ -33,42 +33,42 @@ from .constants import (
 )
 
 # use the .env that is inside the current folder
-# allows to use different .env file for each lightrag instance
+# allows to use different .env file for each hybridrag instance
 # the OS environment variables take precedence over the .env file
 load_dotenv(dotenv_path=".env", override=False)
 
 
 class OllamaServerInfos:
     def __init__(self, name=None, tag=None):
-        self._lightrag_name = name or os.getenv(
+        self._hybridrag_name = name or os.getenv(
             "OLLAMA_EMULATING_MODEL_NAME", DEFAULT_OLLAMA_MODEL_NAME
         )
-        self._lightrag_tag = tag or os.getenv(
+        self._hybridrag_tag = tag or os.getenv(
             "OLLAMA_EMULATING_MODEL_TAG", DEFAULT_OLLAMA_MODEL_TAG
         )
-        self.LIGHTRAG_SIZE = DEFAULT_OLLAMA_MODEL_SIZE
-        self.LIGHTRAG_CREATED_AT = DEFAULT_OLLAMA_CREATED_AT
-        self.LIGHTRAG_DIGEST = DEFAULT_OLLAMA_DIGEST
+        self.HYBRIDRAG_SIZE = DEFAULT_OLLAMA_MODEL_SIZE
+        self.HYBRIDRAG_CREATED_AT = DEFAULT_OLLAMA_CREATED_AT
+        self.HYBRIDRAG_DIGEST = DEFAULT_OLLAMA_DIGEST
 
     @property
-    def LIGHTRAG_NAME(self):
-        return self._lightrag_name
+    def HYBRIDRAG_NAME(self):
+        return self._hybridrag_name
 
-    @LIGHTRAG_NAME.setter
-    def LIGHTRAG_NAME(self, value):
-        self._lightrag_name = value
-
-    @property
-    def LIGHTRAG_TAG(self):
-        return self._lightrag_tag
-
-    @LIGHTRAG_TAG.setter
-    def LIGHTRAG_TAG(self, value):
-        self._lightrag_tag = value
+    @HYBRIDRAG_NAME.setter
+    def HYBRIDRAG_NAME(self, value):
+        self._hybridrag_name = value
 
     @property
-    def LIGHTRAG_MODEL(self):
-        return f"{self._lightrag_name}:{self._lightrag_tag}"
+    def HYBRIDRAG_TAG(self):
+        return self._hybridrag_tag
+
+    @HYBRIDRAG_TAG.setter
+    def HYBRIDRAG_TAG(self, value):
+        self._hybridrag_tag = value
+
+    @property
+    def HYBRIDRAG_MODEL(self):
+        return f"{self._hybridrag_name}:{self._hybridrag_tag}"
 
 
 class TextChunkSchema(TypedDict):
@@ -83,7 +83,7 @@ T = TypeVar("T")
 
 @dataclass
 class QueryParam:
-    """Configuration parameters for query execution in LightRAG."""
+    """Configuration parameters for query execution in HybridRAG."""
 
     mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"] = "mix"
     """Specifies the retrieval mode:
@@ -191,7 +191,7 @@ class StorageNameSpace(ABC):
     async def drop(self) -> dict[str, str]:
         """Drop all data from storage and clean up resources
 
-        This abstract method defines the contract for dropping all data from a storage implementation.
+        Base class for all storage implementations.
         Each storage type must implement this method to:
         1. Clear all data from memory and/or external storage
         2. Remove any associated storage files if applicable

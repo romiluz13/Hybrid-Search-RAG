@@ -44,7 +44,7 @@ from .constants import (
 )
 
 # use the .env that is inside the current folder
-# allows to use different .env file for each lightrag instance
+# allows to use different .env file for each hybridrag instance
 # the OS environment variables take precedence over the .env file
 load_dotenv(dotenv_path=".env", override=False)
 
@@ -85,7 +85,7 @@ def parse_args() -> argparse.Namespace:
         argparse.Namespace: Parsed arguments
     """
 
-    parser = argparse.ArgumentParser(description="LightRAG API Server")
+    parser = argparse.ArgumentParser(description="HybridRAG API Server")
 
     # Server configuration
     parser.add_argument(
@@ -166,8 +166,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--key",
         type=str,
-        default=get_env_value("LIGHTRAG_API_KEY", None),
-        help="API key for authentication. This protects lightrag server against unauthorized access",
+        default=get_env_value("HYBRIDRAG_API_KEY", None),
+        help="API key for authentication. This protects hybridrag server against unauthorized access",
     )
 
     # Optional https parameters
@@ -193,7 +193,7 @@ def parse_args() -> argparse.Namespace:
         "--simulated-model-name",
         type=str,
         default=get_env_value("OLLAMA_EMULATING_MODEL_NAME", DEFAULT_OLLAMA_MODEL_NAME),
-        help="Name for the simulated Ollama model (default: from env or lightrag)",
+        help="Name for the simulated Ollama model (default: from env or hybridrag)",
     )
 
     parser.add_argument(
@@ -328,16 +328,16 @@ def parse_args() -> argparse.Namespace:
 
     # Inject storage configuration from environment variables
     args.kv_storage = get_env_value(
-        "LIGHTRAG_KV_STORAGE", DefaultRAGStorageConfig.KV_STORAGE
+        "HYBRIDRAG_KV_STORAGE", DefaultRAGStorageConfig.KV_STORAGE
     )
     args.doc_status_storage = get_env_value(
-        "LIGHTRAG_DOC_STATUS_STORAGE", DefaultRAGStorageConfig.DOC_STATUS_STORAGE
+        "HYBRIDRAG_DOC_STATUS_STORAGE", DefaultRAGStorageConfig.DOC_STATUS_STORAGE
     )
     args.graph_storage = get_env_value(
-        "LIGHTRAG_GRAPH_STORAGE", DefaultRAGStorageConfig.GRAPH_STORAGE
+        "HYBRIDRAG_GRAPH_STORAGE", DefaultRAGStorageConfig.GRAPH_STORAGE
     )
     args.vector_storage = get_env_value(
-        "LIGHTRAG_VECTOR_STORAGE", DefaultRAGStorageConfig.VECTOR_STORAGE
+        "HYBRIDRAG_VECTOR_STORAGE", DefaultRAGStorageConfig.VECTOR_STORAGE
     )
 
     # Get MAX_PARALLEL_INSERT from environment
@@ -454,8 +454,8 @@ def parse_args() -> argparse.Namespace:
         "EMBEDDING_TOKEN_LIMIT", None, int, special_none=True
     )
 
-    ollama_server_infos.LIGHTRAG_NAME = args.simulated_model_name
-    ollama_server_infos.LIGHTRAG_TAG = args.simulated_model_tag
+    ollama_server_infos.HYBRIDRAG_NAME = args.simulated_model_name
+    ollama_server_infos.HYBRIDRAG_TAG = args.simulated_model_tag
 
     return args
 

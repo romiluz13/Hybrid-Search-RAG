@@ -1,6 +1,6 @@
-# LightRAG Server and WebUI
+# HybridRAG Server and WebUI
 
-The LightRAG Server is designed to provide a Web UI and API support. The Web UI facilitates document indexing, knowledge graph exploration, and a simple RAG query interface. LightRAG Server also provides an Ollama-compatible interface, aiming to emulate LightRAG as an Ollama chat model. This allows AI chat bots, such as Open WebUI, to access LightRAG easily.
+The HybridRAG Server is designed to provide a Web UI and API support. The Web UI facilitates document indexing, knowledge graph exploration, and a simple RAG query interface. HybridRAG Server also provides an Ollama-compatible interface, aiming to emulate HybridRAG as an Ollama chat model. This allows AI chat bots, such as Open WebUI, to access HybridRAG easily.
 
 ![image-20250323122538997](./README.assets/image-20250323122538997.png)
 
@@ -16,20 +16,20 @@ The LightRAG Server is designed to provide a Web UI and API support. The Web UI 
 
 ```bash
 # Using uv (recommended)
-uv pip install "lightrag-hku[api]"
+uv pip install "hybridrag[api]"
 
 # Or using pip
-# pip install "lightrag-hku[api]"
+# pip install "hybridrag[api]"
 ```
 
 * Installation from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/HKUDS/lightrag.git
+git clone https://github.com/HybridRAG/HybridRAG.git
 
 # Change to the repository directory
-cd lightrag
+cd HybridRAG
 
 # Using uv (recommended)
 # Note: uv sync automatically creates a virtual environment in .venv/
@@ -43,15 +43,15 @@ source .venv/bin/activate  # Activate the virtual environment (Linux/macOS)
 # pip install -e ".[api]"
 
 # Build front-end artifacts
-cd lightrag_webui
+cd hybridrag_webui
 bun install --frozen-lockfile
 bun run build
 cd ..
 ```
 
-### Before Starting LightRAG Server
+### Before Starting HybridRAG Server
 
-LightRAG necessitates the integration of both an LLM (Large Language Model) and an Embedding Model to effectively execute document indexing and querying operations. Prior to the initial deployment of the LightRAG server, it is essential to configure the settings for both the LLM and the Embedding Model. LightRAG supports binding to various LLM/Embedding backends:
+HybridRAG necessitates the integration of both an LLM (Large Language Model) and an Embedding Model to effectively execute document indexing and querying operations. Prior to the initial deployment of the HybridRAG server, it is essential to configure the settings for both the LLM and the Embedding Model. HybridRAG supports binding to various LLM/Embedding backends:
 
 * ollama
 * lollms
@@ -60,7 +60,7 @@ LightRAG necessitates the integration of both an LLM (Large Language Model) and 
 * aws_bedrock
 * gemini
 
-It is recommended to use environment variables to configure the LightRAG Server. There is an example environment variable file named `env.example` in the root directory of the project. Please copy this file to the startup directory and rename it to `.env`. After that, you can modify the parameters related to the LLM and Embedding models in the `.env` file. It is important to note that the LightRAG Server will load the environment variables from `.env` into the system environment variables each time it starts. **LightRAG Server will prioritize the settings in the system environment variables to .env file**.
+It is recommended to use environment variables to configure the HybridRAG Server. There is an example environment variable file named `env.example` in the root directory of the project. Please copy this file to the startup directory and rename it to `.env`. After that, you can modify the parameters related to the LLM and Embedding models in the `.env` file. It is important to note that the HybridRAG Server will load the environment variables from `.env` into the system environment variables each time it starts. **HybridRAG Server will prioritize the settings in the system environment variables to .env file**.
 
 > Since VS Code with the Python extension may automatically load the .env file in the integrated terminal, please open a new terminal session after each modification to the .env file.
 
@@ -100,23 +100,23 @@ EMBEDDING_DIM=1024
 # EMBEDDING_BINDING_API_KEY=your_api_key
 ```
 
-> **Important Note**: The Embedding model must be determined before document indexing, and the same model must be used during the document query phase. For certain storage solutions (e.g., PostgreSQL), the vector dimension must be defined upon initial table creation. Therefore, when changing embedding models, it is necessary to delete the existing vector-related tables and allow LightRAG to recreate them with the new dimensions.
+> **Important Note**: The Embedding model must be determined before document indexing, and the same model must be used during the document query phase. For certain storage solutions (e.g., PostgreSQL), the vector dimension must be defined upon initial table creation. Therefore, when changing embedding models, it is necessary to delete the existing vector-related tables and allow HybridRAG to recreate them with the new dimensions.
 
-### Starting LightRAG Server
+### Starting HybridRAG Server
 
-The LightRAG Server supports two operational modes:
+The HybridRAG Server supports two operational modes:
 * The simple and efficient Uvicorn mode:
 
 ```
-lightrag-server
+python -m hybridrag.engine.api.rag_server
 ```
 * The multiprocess Gunicorn + Uvicorn mode (production mode, not supported on Windows environments):
 
 ```
-lightrag-gunicorn --workers 4
+python -m hybridrag.engine.api.run_with_gunicorn --workers 4
 ```
 
-When starting LightRAG, the current working directory must contain the `.env` configuration file. **It is intentionally designed that the `.env` file must be placed in the startup directory**. The purpose of this is to allow users to launch multiple LightRAG instances simultaneously and configure different `.env` files for different instances. **After modifying the `.env` file, you need to reopen the terminal for the new settings to take effect.** This is because each time LightRAG Server starts, it loads the environment variables from the `.env` file into the system environment variables, and system environment variables have higher precedence.
+When starting HybridRAG, the current working directory must contain the `.env` configuration file. **It is intentionally designed that the `.env` file must be placed in the startup directory**. The purpose of this is to allow users to launch multiple HybridRAG instances simultaneously and configure different `.env` files for different instances. **After modifying the `.env` file, you need to reopen the terminal for the new settings to take effect.** This is because each time HybridRAG Server starts, it loads the environment variables from the `.env` file into the system environment variables, and system environment variables have higher precedence.
 
 During startup, configurations in the `.env` file can be overridden by command-line parameters. Common command-line parameters include:
 
@@ -126,52 +126,52 @@ During startup, configurations in the `.env` file can be overridden by command-l
 - `--log-level`: Log level (default: INFO)
 - `--working-dir`: Database persistence directory (default: ./rag_storage)
 - `--input-dir`: Directory for uploaded files (default: ./inputs)
-- `--workspace`: Workspace name, used to logically isolate data between multiple LightRAG instances (default: empty)
+- `--workspace`: Workspace name, used to logically isolate data between multiple HybridRAG instances (default: empty)
 
-### Launching LightRAG Server with Docker
+### Launching HybridRAG Server with Docker
 
-Using Docker Compose is the most convenient way to deploy and run the LightRAG Server.
+Using Docker Compose is the most convenient way to deploy and run the HybridRAG Server.
 
 * Create a project directory.
 
-* Copy the `docker-compose.yml` file from the LightRAG repository into your project directory.
+* Copy the `docker-compose.yml` file from the HybridRAG repository into your project directory.
 
 * Prepare the `.env` file: Duplicate the sample file [`env.example`](https://ai.znipower.com:5013/c/env.example)to create a customized `.env` file, and configure the LLM and embedding parameters according to your specific requirements.
 
-* Start the LightRAG Server with the following command:
+* Start the HybridRAG Server with the following command:
 
 ```shell
 docker compose up
 # If you want the program to run in the background after startup, add the -d parameter at the end of the command.
 ```
 
-You can get the official docker compose file from here: [docker-compose.yml](https://raw.githubusercontent.com/HKUDS/LightRAG/refs/heads/main/docker-compose.yml). For historical versions of LightRAG docker images, visit this link: [LightRAG Docker Images](https://github.com/HKUDS/LightRAG/pkgs/container/lightrag). For more details about docker deployment, please refer to [DockerDeployment.md](./../../docs/DockerDeployment.md).
+You can get the official docker compose file from here: [docker-compose.yml](https://raw.githubusercontent.com/HybridRAG/HybridRAG/refs/heads/main/docker-compose.yml). For historical versions of HybridRAG docker images, visit this link: [HybridRAG Docker Images](https://github.com/HybridRAG/HybridRAG/pkgs/container/hybridrag). For more details about docker deployment, please refer to [DockerDeployment.md](./../../docs/DockerDeployment.md).
 
 ### Offline Deployment
 
-Official LightRAG Docker images are fully compatible with offline or air-gapped environments. If you want to build up you own  offline enviroment, please refer to [Offline Deployment Guide](./../../docs/OfflineDeployment.md).
+Official HybridRAG Docker images are fully compatible with offline or air-gapped environments. If you want to build up you own  offline enviroment, please refer to [Offline Deployment Guide](./../../docs/OfflineDeployment.md).
 
-### Starting Multiple LightRAG Instances
+### Starting Multiple HybridRAG Instances
 
-There are two ways to start multiple LightRAG instances. The first way is to configure a completely independent working environment for each instance. This requires creating a separate working directory for each instance and placing a dedicated `.env` configuration file in that directory. The server listening ports in the configuration files of different instances cannot be the same. Then, you can start the service by running `lightrag-server` in the working directory.
+There are two ways to start multiple HybridRAG instances. The first way is to configure a completely independent working environment for each instance. This requires creating a separate working directory for each instance and placing a dedicated `.env` configuration file in that directory. The server listening ports in the configuration files of different instances cannot be the same. Then, you can start the service by running `python -m hybridrag.engine.api.rag_server` in the working directory.
 
-The second way is for all instances to share the same set of `.env` configuration files, and then use command-line arguments to specify different server listening ports and workspaces for each instance. You can start multiple LightRAG instances in the same working directory with different command-line arguments. For example:
+The second way is for all instances to share the same set of `.env` configuration files, and then use command-line arguments to specify different server listening ports and workspaces for each instance. You can start multiple HybridRAG instances in the same working directory with different command-line arguments. For example:
 
 ```
 # Start instance 1
-lightrag-server --port 9621 --workspace space1
+python -m hybridrag.engine.api.rag_server --port 9621 --workspace space1
 
 # Start instance 2
-lightrag-server --port 9622 --workspace space2
+python -m hybridrag.engine.api.rag_server --port 9622 --workspace space2
 ```
 
 The purpose of a workspace is to achieve data isolation between different instances. Therefore, the `workspace` parameter must be different for different instances; otherwise, it will lead to data confusion and corruption.
 
-When launching multiple LightRAG instances via Docker Compose, simply specify unique `WORKSPACE` and `PORT` environment variables for each container within your `docker-compose.yml`. Even if all instances share a common `.env` file, the container-specific environment variables defined in Compose will take precedence, ensuring independent configurations for each instance.
+When launching multiple HybridRAG instances via Docker Compose, simply specify unique `WORKSPACE` and `PORT` environment variables for each container within your `docker-compose.yml`. Even if all instances share a common `.env` file, the container-specific environment variables defined in Compose will take precedence, ensuring independent configurations for each instance.
 
-### Data Isolation Between LightRAG Instances
+### Data Isolation Between HybridRAG Instances
 
-Configuring an independent working directory and a dedicated `.env` configuration file for each instance can generally ensure that locally persisted files in the in-memory database are saved in their respective working directories, achieving data isolation. By default, LightRAG uses all in-memory databases, and this method of data isolation is sufficient. However, if you are using an external database, and different instances access the same database instance, you need to use workspaces to achieve data isolation; otherwise, the data of different instances will conflict and be destroyed.
+Configuring an independent working directory and a dedicated `.env` configuration file for each instance can generally ensure that locally persisted files in the in-memory database are saved in their respective working directories, achieving data isolation. By default, HybridRAG uses all in-memory databases, and this method of data isolation is sufficient. However, if you are using an external database, and different instances access the same database instance, you need to use workspaces to achieve data isolation; otherwise, the data of different instances will conflict and be destroyed.
 
 The command-line `workspace` argument and the `WORKSPACE` environment variable in the `.env` file can both be used to specify the workspace name for the current instance, with the command-line argument having higher priority. Here is how workspaces are implemented for different types of storage:
 
@@ -185,9 +185,9 @@ To maintain compatibility with legacy data, the default workspace for PostgreSQL
 
 ### Multiple workers for Gunicorn + Uvicorn
 
-The LightRAG Server can operate in the `Gunicorn + Uvicorn` preload mode. Gunicorn's multiple worker (multiprocess) capability prevents document indexing tasks from blocking RAG queries. Using CPU-exhaustive document extraction tools, such as docling, can lead to the entire system being blocked in pure Uvicorn mode.
+The HybridRAG Server can operate in the `Gunicorn + Uvicorn` preload mode. Gunicorn's multiple worker (multiprocess) capability prevents document indexing tasks from blocking RAG queries. Using CPU-exhaustive document extraction tools, such as docling, can lead to the entire system being blocked in pure Uvicorn mode.
 
-Though LightRAG Server uses one worker to process the document indexing pipeline, with the async task support of Uvicorn, multiple files can be processed in parallel. The bottleneck of document indexing speed mainly lies with the LLM. If your LLM supports high concurrency, you can accelerate document indexing by increasing the concurrency level of the LLM. Below are several environment variables related to concurrent processing, along with their default values:
+Though HybridRAG Server uses one worker to process the document indexing pipeline, with the async task support of Uvicorn, multiple files can be processed in parallel. The bottleneck of document indexing speed mainly lies with the LLM. If your LLM supports high concurrency, you can accelerate document indexing by increasing the concurrency level of the LLM. Below are several environment variables related to concurrent processing, along with their default values:
 
 ```
 ### Number of worker processes, not greater than (2 x number_of_cores) + 1
@@ -198,38 +198,38 @@ MAX_PARALLEL_INSERT=2
 MAX_ASYNC=4
 ```
 
-### Install LightRAG as a Linux Service
+### Install HybridRAG as a Linux Service
 
-Create your service file `lightrag.service` from the sample file: `lightrag.service.example`. Modify the start options the service file:
+Create your service file `hybridrag.service` from the sample file: `lightrag.service.example`. Modify the start options the service file:
 
 ```text
 # Set Enviroment to your Python virtual enviroment
-Environment="PATH=/home/netman/lightrag-xyj/venv/bin"
-WorkingDirectory=/home/netman/lightrag-xyj
-# ExecStart=/home/netman/lightrag-xyj/venv/bin/lightrag-server
-ExecStart=/home/netman/lightrag-xyj/venv/bin/lightrag-gunicorn
+Environment="PATH=/home/netman/hybridrag-xyj/venv/bin"
+WorkingDirectory=/home/netman/hybridrag-xyj
+# ExecStart=/home/netman/hybridrag-xyj/venv/bin/python -m hybridrag.engine.api.rag_server
+ExecStart=/home/netman/hybridrag-xyj/venv/bin/python -m hybridrag.engine.api.run_with_gunicorn
 
 ```
 
-> The ExecStart command must be either `lightrag-gunicorn` or `lightrag-server`; no wrapper scripts are allowed. This is because service termination requires the main process to be one of these two executables.
+> The ExecStart command must be either `python -m hybridrag.engine.api.run_with_gunicorn` or `python -m hybridrag.engine.api.rag_server`; no wrapper scripts are allowed. This is because service termination requires the main process to be one of these two executables.
 
-Install LightRAG service. If your system is Ubuntu, the following commands will work:
+Install HybridRAG service. If your system is Ubuntu, the following commands will work:
 
 ```shell
-sudo cp lightrag.service /etc/systemd/system/
+sudo cp hybridrag.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl start lightrag.service
-sudo systemctl status lightrag.service
-sudo systemctl enable lightrag.service
+sudo systemctl start hybridrag.service
+sudo systemctl status hybridrag.service
+sudo systemctl enable hybridrag.service
 ```
 
 ## Ollama Emulation
 
-We provide Ollama-compatible interfaces for LightRAG, aiming to emulate LightRAG as an Ollama chat model. This allows AI chat frontends supporting Ollama, such as Open WebUI, to access LightRAG easily.
+We provide Ollama-compatible interfaces for HybridRAG, aiming to emulate HybridRAG as an Ollama chat model. This allows AI chat frontends supporting Ollama, such as Open WebUI, to access HybridRAG easily.
 
-### Connect Open WebUI to LightRAG
+### Connect Open WebUI to HybridRAG
 
-After starting the lightrag-server, you can add an Ollama-type connection in the Open WebUI admin panel. And then a model named `lightrag:latest` will appear in Open WebUI's model management interface. Users can then send queries to LightRAG through the chat interface. You should install LightRAG as a service for this use case.
+After starting the hybridrag server, you can add an Ollama-type connection in the Open WebUI admin panel. And then a model named `hybridrag:latest` will appear in Open WebUI's model management interface. Users can then send queries to HybridRAG through the chat interface. You should install HybridRAG as a service for this use case.
 
 Open WebUI uses an LLM to do the session title and session keyword generation task. So the Ollama chat completion API detects and forwards OpenWebUI session-related requests directly to the underlying LLM. Screenshot from Open WebUI:
 
@@ -237,9 +237,9 @@ Open WebUI uses an LLM to do the session title and session keyword generation ta
 
 ### Choose Query mode in chat
 
-The default query mode is `hybrid` if you send a message (query) from the Ollama interface of LightRAG. You can select query mode by sending a message with a query prefix.
+The default query mode is `hybrid` if you send a message (query) from the Ollama interface of HybridRAG. You can select query mode by sending a message with a query prefix.
 
-A query prefix in the query string can determine which LightRAG query mode is used to generate the response for the query. The supported prefixes include:
+A query prefix in the query string can determine which HybridRAG query mode is used to generate the response for the query. The supported prefixes include:
 
 ```
 /local
@@ -257,15 +257,15 @@ A query prefix in the query string can determine which LightRAG query mode is us
 /mixcontext
 ```
 
-For example, the chat message `/mix What's LightRAG?` will trigger a mix mode query for LightRAG. A chat message without a query prefix will trigger a hybrid mode query by default.
+For example, the chat message `/mix What's HybridRAG?` will trigger a mix mode query for HybridRAG. A chat message without a query prefix will trigger a hybrid mode query by default.
 
-`/bypass` is not a LightRAG query mode; it will tell the API Server to pass the query directly to the underlying LLM, including the chat history. So the user can use the LLM to answer questions based on the chat history. If you are using Open WebUI as a front end, you can just switch the model to a normal LLM instead of using the `/bypass` prefix.
+`/bypass` is not a HybridRAG query mode; it will tell the API Server to pass the query directly to the underlying LLM, including the chat history. So the user can use the LLM to answer questions based on the chat history. If you are using Open WebUI as a front end, you can just switch the model to a normal LLM instead of using the `/bypass` prefix.
 
-`/context` is also not a LightRAG query mode; it will tell LightRAG to return only the context information prepared for the LLM. You can check the context if it's what you want, or process the context by yourself.
+`/context` is also not a HybridRAG query mode; it will tell HybridRAG to return only the context information prepared for the LLM. You can check the context if it's what you want, or process the context by yourself.
 
 ### Add user prompt in chat
 
-When using LightRAG for content queries, avoid combining the search process with unrelated output processing, as this significantly impacts query effectiveness. User prompt is specifically designed to address this issue — it does not participate in the RAG retrieval phase, but rather guides the LLM on how to process the retrieved results after the query is completed. We can append square brackets to the query prefix to provide the LLM with the user prompt:
+When using HybridRAG for content queries, avoid combining the search process with unrelated output processing, as this significantly impacts query effectiveness. User prompt is specifically designed to address this issue — it does not participate in the RAG retrieval phase, but rather guides the LLM on how to process the retrieved results after the query is completed. We can append square brackets to the query prefix to provide the LLM with the user prompt:
 
 ```
 /[Use mermaid format for diagrams] Please draw a character relationship diagram for Scrooge
@@ -274,18 +274,18 @@ When using LightRAG for content queries, avoid combining the search process with
 
 ## API Key and Authentication
 
-By default, the LightRAG Server can be accessed without any authentication. We can configure the server with an API Key or account credentials to secure it.
+By default, the HybridRAG Server can be accessed without any authentication. We can configure the server with an API Key or account credentials to secure it.
 
 * API Key:
 
 ```
-LIGHTRAG_API_KEY=your-secure-api-key-here
+HYBRIDRAG_API_KEY=your-secure-api-key-here
 WHITELIST_PATHS=/health,/api/*
 ```
 
 > Health check and Ollama emulation endpoints are excluded from API Key check by default. For security reasons, remove `/api/*` from `WHITELIST_PATHS` if the Ollama service is not required.
 
-The API key is passed using the request header `X-API-Key`. Below is an example of accessing the LightRAG Server via API:
+The API key is passed using the request header `X-API-Key`. Below is an example of accessing the HybridRAG Server via API:
 
 ```
 curl -X 'POST' \
@@ -297,7 +297,7 @@ curl -X 'POST' \
 
 * Account credentials (the Web UI requires login before access can be granted):
 
-LightRAG API Server implements JWT-based authentication using the HS256 algorithm. To enable secure access control, the following environment variables are required:
+HybridRAG API Server implements JWT-based authentication using the HS256 algorithm. To enable secure access control, the following environment variables are required:
 
 ```bash
 # For jwt auth
@@ -316,9 +316,9 @@ Azure OpenAI API can be created using the following commands in Azure CLI (you n
 
 ```bash
 # Change the resource group name, location, and OpenAI resource name as needed
-RESOURCE_GROUP_NAME=LightRAG
+RESOURCE_GROUP_NAME=HybridRAG
 LOCATION=swedencentral
-RESOURCE_NAME=LightRAG-OpenAI
+RESOURCE_NAME=HybridRAG-OpenAI
 
 az login
 az group create --name $RESOURCE_GROUP_NAME --location $LOCATION
@@ -346,7 +346,7 @@ EMBEDDING_BINDING=azure_openai
 EMBEDDING_MODEL=your-embedding-deployment-name
 ```
 
-## LightRAG Server Configuration in Detail
+## HybridRAG Server Configuration in Detail
 
 The API Server can be configured in three ways (highest priority first):
 
@@ -358,7 +358,7 @@ Most of the configurations come with default settings; check out the details in 
 
 ### LLM and Embedding Backend Supported
 
-LightRAG supports binding to various LLM/Embedding backends:
+HybridRAG supports binding to various LLM/Embedding backends:
 
 * ollama
 * openai (including openai compatible)
@@ -370,9 +370,9 @@ Use environment variables `LLM_BINDING` or CLI argument `--llm-binding` to selec
 
 For LLM and embedding configuration examples, please refer to the `env.example` file in the project's root directory. To view the complete list of configurable options for OpenAI and Ollama-compatible LLM interfaces, use the following commands:
 ```
-lightrag-server --llm-binding openai --help
-lightrag-server --llm-binding ollama --help
-lightrag-server --embedding-binding ollama --help
+python -m hybridrag.engine.api.rag_server --llm-binding openai --help
+python -m hybridrag.engine.api.rag_server --llm-binding ollama --help
+python -m hybridrag.engine.api.rag_server --embedding-binding ollama --help
 ```
 
 > Please use OpenAI-compatible method to access LLMs deployed by OpenRouter or vLLM/SGLang. You can pass additional parameters to OpenRouter or vLLM/SGLang through the `OPENAI_LLM_EXTRA_BODY` environment variable to disable reasoning mode or achieve other personalized controls.
@@ -398,31 +398,31 @@ It's very common to set `ENABLE_LLM_CACHE_FOR_EXTRACT` to true for a test enviro
 
 ### Storage Types Supported
 
-LightRAG uses 4 types of storage for different purposes:
+HybridRAG uses 4 types of storage for different purposes:
 
 * KV_STORAGE: llm response cache, text chunks, document information
 * VECTOR_STORAGE: entities vectors, relation vectors, chunks vectors
 * GRAPH_STORAGE: entity relation graph
 * DOC_STATUS_STORAGE: document indexing status
 
-LightRAG Server offers various storage implementations, with the default being an in-memory database that persists data to the WORKING_DIR directory. Additionally, LightRAG supports a wide range of storage solutions including PostgreSQL, MongoDB, FAISS, Milvus, Qdrant, Neo4j, Memgraph, and Redis. For detailed information on supported storage options, please refer to the storage section in the README.md file located in the root directory.
+HybridRAG Server offers various storage implementations, with the default being an in-memory database that persists data to the WORKING_DIR directory. Additionally, HybridRAG supports a wide range of storage solutions including PostgreSQL, MongoDB, FAISS, Milvus, Qdrant, Neo4j, Memgraph, and Redis. For detailed information on supported storage options, please refer to the storage section in the README.md file located in the root directory.
 
 You can select the storage implementation by configuring environment variables. For instance, prior to the initial launch of the API server, you can set the following environment variable to specify your desired storage implementation:
 
 ```
-LIGHTRAG_KV_STORAGE=PGKVStorage
-LIGHTRAG_VECTOR_STORAGE=PGVectorStorage
-LIGHTRAG_GRAPH_STORAGE=PGGraphStorage
-LIGHTRAG_DOC_STATUS_STORAGE=PGDocStatusStorage
+HYBRIDRAG_KV_STORAGE=PGKVStorage
+HYBRIDRAG_VECTOR_STORAGE=PGVectorStorage
+HYBRIDRAG_GRAPH_STORAGE=PGGraphStorage
+HYBRIDRAG_DOC_STATUS_STORAGE=PGDocStatusStorage
 ```
 
-You cannot change storage implementation selection after adding documents to LightRAG. Data migration from one storage implementation to another is not supported yet. For further information, please read the sample env file or config.ini file.
+You cannot change storage implementation selection after adding documents to HybridRAG. Data migration from one storage implementation to another is not supported yet. For further information, please read the sample env file or config.ini file.
 
 ### LLM Cache Migration Between Storage Types
 
-When switching the storage implementation in LightRAG, the LLM cache can be migrated from the existing storage to the new one. Subsequently, when re-uploading files to the new storage, the pre-existing LLM cache will significantly accelerate file processing. For detailed instructions on using the LLM cache migration tool, please refer to[README_MIGRATE_LLM_CACHE.md](../tools/README_MIGRATE_LLM_CACHE.md)
+When switching the storage implementation in HybridRAG, the LLM cache can be migrated from the existing storage to the new one. Subsequently, when re-uploading files to the new storage, the pre-existing LLM cache will significantly accelerate file processing. For detailed instructions on using the LLM cache migration tool, please refer to[README_MIGRATE_LLM_CACHE.md](../tools/README_MIGRATE_LLM_CACHE.md)
 
-### LightRAG API Server Command Line Options
+### HybridRAG API Server Command Line Options
 
 | Parameter             | Default       | Description                                                                                                                     |
 | --------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -433,7 +433,7 @@ When switching the storage implementation in LightRAG, the LLM cache can be migr
 | --max-async           | 4             | Maximum number of async operations                                                                                              |
 | --log-level           | INFO          | Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)                                                                           |
 | --verbose             | -             | Verbose debug output (True, False)                                                                                              |
-| --key                 | None          | API key for authentication. Protects the LightRAG server against unauthorized access                                            |
+| --key                 | None          | API key for authentication. Protects the HybridRAG server against unauthorized access                                            |
 | --ssl                 | False         | Enable HTTPS                                                                                                                    |
 | --ssl-certfile        | None          | Path to SSL certificate file (required if --ssl is enabled)                                                                     |
 | --ssl-keyfile         | None          | Path to SSL private key file (required if --ssl is enabled)                                                                     |
@@ -442,7 +442,7 @@ When switching the storage implementation in LightRAG, the LLM cache can be migr
 
 ### Reranking Configuration
 
-Reranking query-recalled chunks can significantly enhance retrieval quality by re-ordering documents based on an optimized relevance scoring model. LightRAG currently supports the following rerank providers:
+Reranking query-recalled chunks can significantly enhance retrieval quality by re-ordering documents based on an optimized relevance scoring model. HybridRAG currently supports the following rerank providers:
 
 - **Cohere / vLLM**: Offers full API integration with Cohere AI's `v2/rerank` endpoint. As vLLM provides a Cohere-compatible reranker API, all reranker models deployed via vLLM are also supported.
 - **Jina AI**: Provides complete implementation compatibility with all Jina rerank models.
@@ -495,7 +495,7 @@ The `include_chunk_content` parameter (default: `false`) controls whether the ac
 
 ```json
 {
-  "query": "What is LightRAG?",
+  "query": "What is HybridRAG?",
   "mode": "mix",
   "include_references": true,
   "include_chunk_content": true
@@ -506,13 +506,13 @@ The `include_chunk_content` parameter (default: `false`) controls whether the ac
 
 ```json
 {
-  "response": "LightRAG is a graph-based RAG system...",
+  "response": "HybridRAG is a graph-based RAG system...",
   "references": [
     {
       "reference_id": "1",
       "file_path": "/documents/intro.md",
       "content": [
-        "LightRAG is a retrieval-augmented generation system that combines knowledge graphs with vector similarity search...",
+        "HybridRAG is a retrieval-augmented generation system that combines knowledge graphs with vector similarity search...",
         "The system uses a dual-indexing approach with both vector embeddings and graph structures for enhanced retrieval..."
       ]
     },
@@ -562,10 +562,10 @@ EMBEDDING_BINDING_HOST=http://localhost:11434
 
 ### For JWT Auth
 # AUTH_ACCOUNTS='admin:admin123,user1:pass456'
-# TOKEN_SECRET=your-key-for-LightRAG-API-Server-xxx
+# TOKEN_SECRET=your-key-for-HybridRAG-API-Server-xxx
 # TOKEN_EXPIRE_HOURS=48
 
-# LIGHTRAG_API_KEY=your-secure-api-key-here-123
+# HYBRIDRAG_API_KEY=your-secure-api-key-here-123
 # WHITELIST_PATHS=/api/*
 # WHITELIST_PATHS=/health,/api/*
 
@@ -573,7 +573,7 @@ EMBEDDING_BINDING_HOST=http://localhost:11434
 
 ## Document and Chunk  Processing Login Clarification
 
-The document processing pipeline in LightRAG is somewhat complex and is divided into two primary stages: the Extraction stage (entity and relationship extraction) and the Merging stage (entity and relationship merging). There are two key parameters that control pipeline concurrency: the maximum number of files processed in parallel (MAX_PARALLEL_INSERT) and the maximum number of concurrent LLM requests (MAX_ASYNC). The workflow is described as follows:
+The document processing pipeline in HybridRAG is somewhat complex and is divided into two primary stages: the Extraction stage (entity and relationship extraction) and the Merging stage (entity and relationship merging). There are two key parameters that control pipeline concurrency: the maximum number of files processed in parallel (MAX_PARALLEL_INSERT) and the maximum number of concurrent LLM requests (MAX_ASYNC). The workflow is described as follows:
 
 1. MAX_ASYNC limits the total number of concurrent LLM requests in the system, including those for querying, extraction, and merging. LLM requests have different priorities: query operations have the highest priority, followed by merging, and then extraction.
 2. MAX_PARALLEL_INSERT controls the number of files processed in parallel during the extraction stage. For optimal performance, MAX_PARALLEL_INSERT is recommended to be set between 2 and 10, typically MAX_ASYNC/3. Setting this value too high can increase the likelihood of naming conflicts among entities and relationships across different documents during the merge phase, thereby reducing its overall efficiency.
@@ -605,7 +605,7 @@ You can test the API endpoints using the provided curl commands or through the S
 
 ## Asynchronous Document Indexing with Progress Tracking
 
-LightRAG implements asynchronous document indexing to enable frontend monitoring and querying of document processing progress. Upon uploading files or inserting text through designated endpoints, a unique Track ID is returned to facilitate real-time progress monitoring.
+HybridRAG implements asynchronous document indexing to enable frontend monitoring and querying of document processing progress. Upon uploading files or inserting text through designated endpoints, a unique Track ID is returned to facilitate real-time progress monitoring.
 
 **API Endpoints Supporting Track ID Generation:**
 
