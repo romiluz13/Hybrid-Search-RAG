@@ -32,6 +32,7 @@ env/
 *~
 
 # Testing
+tests/
 .pytest_cache/
 .coverage
 .coverage.*
@@ -64,6 +65,8 @@ build-process/
 planning/
 research/
 CLAUDE.md
+website/
+deprecated/
 
 # OS files
 .DS_Store
