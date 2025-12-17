@@ -252,13 +252,16 @@ class HybridRAG:
         await initialize_pipeline_status()
 
         # Initialize conversation memory for multi-turn conversations
+        # Pass LLM function to enable self-compaction (summarization)
         logger.info("[INIT] Initializing conversation memory...")
         self._memory = ConversationMemory(
             mongodb_uri=self.settings.mongodb_uri.get_secret_value(),
             database=self.settings.mongodb_database,
+            max_token_limit=32000,  # Compact when exceeds 32K tokens (models support 200K+)
+            llm_func=llm_func,  # Enable summarization for compaction
         )
         await self._memory.initialize()
-        logger.info("[INIT] Conversation memory initialized")
+        logger.info("[INIT] Conversation memory initialized (with self-compaction enabled)")
 
         self._initialized = True
         logger.info("[INIT] ========== HybridRAG Initialization Complete ==========")
@@ -975,6 +978,62 @@ Provide a helpful, comprehensive answer."""
                 "entity_boosting": self.settings.enable_entity_boosting,
             },
         }
+
+    async def get_knowledge_base_stats(self) -> dict[str, Any]:
+        """
+        Get knowledge base statistics including documents, entities, and relationships.
+
+        Returns:
+            Dict with knowledge base statistics
+        """
+        rag = self._ensure_initialized()
+
+        stats = {
+            "documents": {"total": 0, "by_status": {}},
+            "entities": 0,
+            "relationships": 0,
+            "chunks": 0,
+            "recent_documents": [],
+        }
+
+        try:
+            # Get document counts by status
+            doc_counts = await rag.doc_status.get_all_status_counts()
+            stats["documents"]["total"] = doc_counts.get("all", 0)
+            stats["documents"]["by_status"] = {
+                k: v for k, v in doc_counts.items() if k != "all"
+            }
+
+            # Get entity count (MongoVectorDBStorage uses _data attribute)
+            entity_count = await rag.entities_vdb._data.count_documents({})
+            stats["entities"] = entity_count
+
+            # Get relationship count
+            relationship_count = await rag.relationships_vdb._data.count_documents({})
+            stats["relationships"] = relationship_count
+
+            # Get chunk count
+            chunk_count = await rag.chunks_vdb._data.count_documents({})
+            stats["chunks"] = chunk_count
+
+            # Get recent documents (last 10)
+            cursor = rag.doc_status._data.find(
+                {},
+                {"_id": 0, "id": 1, "file_path": 1, "status": 1, "created_at": 1, "chunks_count": 1}
+            ).sort("created_at", -1).limit(10)
+
+            async for doc in cursor:
+                stats["recent_documents"].append({
+                    "id": doc.get("id", "unknown")[:12] + "...",
+                    "file": doc.get("file_path", "unknown"),
+                    "status": doc.get("status", "unknown"),
+                    "chunks": doc.get("chunks_count", 0),
+                })
+
+        except Exception as e:
+            logger.error(f"[STATS] Error getting knowledge base stats: {e}")
+
+        return stats
 
 
 async def create_hybridrag(

@@ -30,13 +30,22 @@ This is a production-ready implementation of GraphRAG concepts, built on top of 
 ### Installation
 
 ```bash
-# Install from PyPI
+# Core package
 pip install mongodb-hybridrag
+
+# With CLI (Rich terminal interface)
+pip install mongodb-hybridrag[cli]
+
+# With Chainlit UI (Web chat interface)
+pip install mongodb-hybridrag[ui]
+
+# Everything (CLI + UI + API + Ingestion + Observability)
+pip install mongodb-hybridrag[all]
 
 # Or install from source
 git clone https://github.com/romiluz13/Hybrid-Search-RAG.git
 cd Hybrid-Search-RAG
-pip install -e .
+pip install -e ".[all]"
 ```
 
 ### Configuration
@@ -102,16 +111,58 @@ asyncio.run(main())
 | `hybrid` | Local + global | Comprehensive answers |
 | `naive` | Vector search only | Simple similarity search |
 
-## API Server
+## Interfaces
 
-Start the FastAPI server:
+HybridRAG provides three ways to interact with your knowledge base:
+
+### CLI (Terminal Interface)
+
+Interactive command-line interface with Rich formatting:
+
+```bash
+# After installing with [cli] extra
+hybridrag
+
+# Or run directly
+python -m hybridrag.cli
+```
+
+**CLI Commands:**
+- Type questions to query your knowledge base
+- `ingest <path>` - Ingest a file or folder
+- `info` - Show system status
+- `new` - Start new conversation session
+- `history` - Show conversation history
+- `clear` - Clear screen
+- `exit` - Quit
+
+### Chainlit UI (Web Interface)
+
+Modern web chat interface with file upload:
+
+```bash
+# After installing with [ui] extra
+chainlit run src/hybridrag/ui/chat.py
+
+# Or with hot reload for development
+chainlit run src/hybridrag/ui/chat.py --watch
+```
+
+**UI Features:**
+- Drag & drop PDF, TXT, Markdown files
+- `/mode <local|global|hybrid|naive|mix>` - Switch query modes
+- `/status` - View system configuration
+- `/help` - Show available commands
+
+### API Server
+
+REST API for programmatic access:
 
 ```bash
 uvicorn src.hybridrag.api.main:app --reload
 ```
 
-### Endpoints
-
+**Endpoints:**
 - `POST /query` - Query the RAG system
 - `POST /ingest` - Ingest documents
 - `POST /sessions` - Create conversation session

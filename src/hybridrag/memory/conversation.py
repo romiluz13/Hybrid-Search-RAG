@@ -32,7 +32,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
@@ -40,9 +40,23 @@ logger = logging.getLogger("hybridrag.memory")
 
 # Default configuration
 DEFAULT_COLLECTION_NAME = "conversation_sessions"
-DEFAULT_HISTORY_SIZE = 20  # Keep last N message pairs (40 messages total)
+DEFAULT_HISTORY_SIZE = 50  # Keep last N message pairs (100 messages total)
+DEFAULT_MAX_TOKEN_LIMIT = 32000  # Token limit before compaction (models support 200K+)
 DEFAULT_SESSION_ID_KEY = "session_id"
 DEFAULT_MESSAGES_KEY = "messages"
+
+# Summarization prompt template
+SUMMARY_PROMPT = """Progressively summarize the conversation below, adding onto the previous summary.
+Return a new summary that incorporates the key points from both the previous summary and new messages.
+Focus on important facts, decisions, and context that would be useful for future questions.
+
+CURRENT SUMMARY:
+{summary}
+
+NEW MESSAGES:
+{new_lines}
+
+NEW SUMMARY:"""
 
 
 @dataclass
@@ -51,6 +65,8 @@ class ConversationSession:
 
     session_id: str
     messages: list[dict[str, Any]] = field(default_factory=list)
+    summary: str = ""  # Running summary of compacted (old) messages
+    summary_token_count: int = 0  # Estimated token count of summary
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -78,29 +94,37 @@ class ConversationSession:
         """
         Convert messages to a context string for retrieval augmentation.
 
+        Includes running summary (if exists) plus recent messages.
+
         Args:
             max_messages: Optional limit on number of messages to include
 
         Returns:
             Formatted string of conversation history
         """
+        parts = []
+
+        # Include summary of older messages if exists
+        if self.summary:
+            parts.append(f"Summary of earlier conversation:\n{self.summary}")
+
+        # Include recent messages
         messages = self.messages
         if max_messages is not None:
             messages = messages[-max_messages:]
 
-        if not messages:
-            return ""
+        if messages:
+            lines = ["Recent conversation:"]
+            for msg in messages:
+                role = "User" if msg["role"] == "user" else "Assistant"
+                content = msg["content"]
+                # Truncate very long messages for context
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                lines.append(f"{role}: {content}")
+            parts.append("\n".join(lines))
 
-        lines = ["Previous conversation:"]
-        for msg in messages:
-            role = "User" if msg["role"] == "user" else "Assistant"
-            content = msg["content"]
-            # Truncate very long messages for context
-            if len(content) > 500:
-                content = content[:500] + "..."
-            lines.append(f"{role}: {content}")
-
-        return "\n".join(lines)
+        return "\n\n".join(parts) if parts else ""
 
 
 class ConversationMemory:
@@ -141,17 +165,21 @@ class ConversationMemory:
         database: str | None = None,
         collection_name: str = DEFAULT_COLLECTION_NAME,
         history_size: int | None = DEFAULT_HISTORY_SIZE,
+        max_token_limit: int = DEFAULT_MAX_TOKEN_LIMIT,
+        llm_func: Callable | None = None,
         session_id_key: str = DEFAULT_SESSION_ID_KEY,
         messages_key: str = DEFAULT_MESSAGES_KEY,
     ):
         """
-        Initialize ConversationMemory.
+        Initialize ConversationMemory with self-compaction support.
 
         Args:
             mongodb_uri: MongoDB connection string (defaults to MONGODB_URI env var)
             database: Database name (defaults to MONGODB_DATABASE env var)
             collection_name: Collection name for sessions
             history_size: Max number of message pairs to keep (None for unlimited)
+            max_token_limit: Token limit before compaction (summarization)
+            llm_func: LLM function for summarization (required for compaction)
             session_id_key: Field name for session ID
             messages_key: Field name for messages array
         """
@@ -159,6 +187,8 @@ class ConversationMemory:
         self._database_name = database or os.environ.get("MONGODB_DATABASE", "hybridrag")
         self._collection_name = collection_name
         self._history_size = history_size
+        self._max_token_limit = max_token_limit
+        self._llm_func = llm_func
         self._session_id_key = session_id_key
         self._messages_key = messages_key
 
@@ -258,6 +288,8 @@ class ConversationMemory:
         return ConversationSession(
             session_id=doc[self._session_id_key],
             messages=doc.get(self._messages_key, []),
+            summary=doc.get("summary", ""),
+            summary_token_count=doc.get("summary_token_count", 0),
             created_at=doc.get("created_at", datetime.utcnow()),
             updated_at=doc.get("updated_at", datetime.utcnow()),
             metadata=doc.get("metadata", {}),
@@ -309,26 +341,141 @@ class ConversationMemory:
         if self._history_size is not None:
             await self._trim_history(session_id)
 
-    async def _trim_history(self, session_id: str) -> None:
-        """
-        Trim history to keep only the most recent messages.
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count (rough: 4 chars = 1 token)."""
+        return len(text) // 4
 
-        Keeps the last N message pairs (2*history_size messages).
-        """
-        max_messages = self._history_size * 2  # Pairs of user/assistant
+    def _format_messages_for_summary(self, messages: list[dict]) -> str:
+        """Format messages for summarization prompt."""
+        lines = []
+        for msg in messages:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            lines.append(f"{role}: {msg['content']}")
+        return "\n".join(lines)
 
-        doc = await self._collection.find_one(
-            {self._session_id_key: session_id},
-            {self._messages_key: 1}
+    async def _summarize_messages(
+        self,
+        messages: list[dict],
+        existing_summary: str,
+    ) -> str:
+        """
+        Use LLM to summarize messages into a running summary.
+
+        Args:
+            messages: Messages to summarize
+            existing_summary: Existing summary to build upon
+
+        Returns:
+            New summary incorporating old summary + new messages
+        """
+        if not self._llm_func:
+            logger.warning("[MEMORY] No LLM function provided, cannot summarize")
+            return existing_summary
+
+        new_lines = self._format_messages_for_summary(messages)
+        prompt = SUMMARY_PROMPT.format(
+            summary=existing_summary or "(No previous summary)",
+            new_lines=new_lines,
         )
 
-        if doc and len(doc.get(self._messages_key, [])) > max_messages:
-            messages = doc[self._messages_key][-max_messages:]
+        try:
+            new_summary = await self._llm_func(prompt)
+            logger.info(f"[MEMORY] Generated summary: {len(new_summary)} chars")
+            return new_summary.strip()
+        except Exception as e:
+            logger.error(f"[MEMORY] Summarization failed: {e}")
+            return existing_summary
+
+    async def _compact_if_needed(self, session_id: str) -> None:
+        """
+        Compact conversation if it exceeds token limit.
+
+        Instead of deleting old messages, summarizes them and keeps:
+        [Summary] + [Recent Messages]
+        """
+        session = await self.get_session(session_id)
+        if not session:
+            return
+
+        # Calculate current token usage
+        total_tokens = self._estimate_tokens(session.summary)
+        for msg in session.messages:
+            total_tokens += self._estimate_tokens(msg.get("content", ""))
+
+        if total_tokens <= self._max_token_limit:
+            return  # Under limit, no compaction needed
+
+        logger.info(f"[MEMORY] Session {session_id[:8]}... exceeds token limit ({total_tokens} > {self._max_token_limit}), compacting...")
+
+        # Prune oldest messages until under limit (keep at least 4 messages)
+        messages = session.messages.copy()
+        pruned = []
+        min_keep = 4  # Always keep at least 4 recent messages
+
+        while (
+            self._estimate_tokens(session.summary)
+            + sum(self._estimate_tokens(m.get("content", "")) for m in messages)
+            > self._max_token_limit
+            and len(messages) > min_keep
+        ):
+            pruned.append(messages.pop(0))
+
+        if not pruned:
+            return  # Nothing to prune
+
+        # Summarize pruned messages
+        if self._llm_func:
+            new_summary = await self._summarize_messages(pruned, session.summary)
+            summary_tokens = self._estimate_tokens(new_summary)
+
+            # Update MongoDB with new summary and trimmed messages
             await self._collection.update_one(
                 {self._session_id_key: session_id},
-                {"$set": {self._messages_key: messages}}
+                {
+                    "$set": {
+                        self._messages_key: messages,
+                        "summary": new_summary,
+                        "summary_token_count": summary_tokens,
+                        "summary_updated_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow(),
+                    }
+                }
             )
-            logger.debug(f"[MEMORY] Trimmed history for session {session_id} to {max_messages} messages")
+            logger.info(f"[MEMORY] Compacted session {session_id[:8]}...: pruned {len(pruned)} messages, kept {len(messages)}")
+        else:
+            # No LLM - fall back to simple truncation (legacy behavior)
+            await self._collection.update_one(
+                {self._session_id_key: session_id},
+                {"$set": {self._messages_key: messages, "updated_at": datetime.utcnow()}}
+            )
+            logger.warning(f"[MEMORY] No LLM for summarization, truncated {len(pruned)} messages")
+
+    async def _trim_history(self, session_id: str) -> None:
+        """
+        Trim/compact history if it exceeds limits.
+
+        Uses intelligent compaction (summarization) if LLM is available,
+        otherwise falls back to simple truncation.
+        """
+        # Use compaction if LLM is available
+        if self._llm_func:
+            await self._compact_if_needed(session_id)
+        else:
+            # Legacy truncation behavior
+            max_messages = self._history_size * 2  # Pairs of user/assistant
+
+            doc = await self._collection.find_one(
+                {self._session_id_key: session_id},
+                {self._messages_key: 1}
+            )
+
+            if doc and len(doc.get(self._messages_key, [])) > max_messages:
+                messages = doc[self._messages_key][-max_messages:]
+                await self._collection.update_one(
+                    {self._session_id_key: session_id},
+                    {"$set": {self._messages_key: messages}}
+                )
+                logger.debug(f"[MEMORY] Trimmed history for session {session_id} to {max_messages} messages")
 
     async def get_messages(
         self,

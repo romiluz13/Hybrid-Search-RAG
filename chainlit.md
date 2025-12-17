@@ -1,14 +1,32 @@
-# Welcome to Chainlit! 🚀🤖
+# Welcome to HybridRAG
 
-Hi there, Developer! 👋 We're excited to have you on board. Chainlit is a powerful tool designed to help you prototype, debug and share applications built on top of LLMs.
+**Intelligent Knowledge Base Search** powered by:
+- **MongoDB Atlas** - Vector + Graph Storage
+- **Voyage AI** - State-of-the-art Embeddings & Reranking
+- **Multi-Provider LLM** - Anthropic, OpenAI, Gemini, and more
 
-## Useful Links 🔗
+## Getting Started
 
-- **Documentation:** Get started with our comprehensive [Chainlit Documentation](https://docs.chainlit.io) 📚
-- **Discord Community:** Join our friendly [Chainlit Discord](https://discord.gg/k73SQ3FyUh) to ask questions, share your projects, and connect with other developers! 💬
+1. **Upload Documents** - Drag & drop PDF, TXT, or Markdown files
+2. **Ask Questions** - Query your documents using natural language
+3. **Explore Connections** - Leverage knowledge graph relationships
 
-We can't wait to see what you create with Chainlit! Happy coding! 💻😊
+## Commands
 
-## Welcome screen
+- `/mode <local|global|hybrid|naive|mix>` - Switch query modes
+- `/status` - View system configuration
+- `/help` - Show available commands
 
-To modify the welcome screen, edit the `chainlit.md` file at the root of your project. If you do not want a welcome screen, just leave this file empty.
+## Query Modes
+
+| Mode | Description |
+|------|-------------|
+| `mix` | Combined KG + Vector search (recommended) |
+| `local` | Entity-focused graph neighbors |
+| `global` | Community summaries |
+| `hybrid` | Local + Global combined |
+| `naive` | Direct vector search |
+
+---
+
+Upload a document to get started!

@@ -3,7 +3,6 @@ import re
 import time
 from dataclasses import dataclass, field
 import numpy as np
-import configparser
 import asyncio
 
 from typing import Any, Union, final
@@ -21,11 +20,6 @@ from ..types import KnowledgeGraph, KnowledgeGraphNode, KnowledgeGraphEdge
 from ..constants import GRAPH_FIELD_SEP
 from ..kg.shared_storage import get_data_init_lock
 
-# import pipmaster as pm
-# 
-# if not pm.is_installed("pymongo"):
-#     pm.install("pymongo")
-
 from pymongo import AsyncMongoClient  # type: ignore
 from pymongo import UpdateOne  # type: ignore
 from pymongo.asynchronous.database import AsyncDatabase  # type: ignore
@@ -33,9 +27,8 @@ from pymongo.asynchronous.collection import AsyncCollection  # type: ignore
 from pymongo.operations import SearchIndexModel  # type: ignore
 from pymongo.errors import PyMongoError  # type: ignore
 
-config = configparser.ConfigParser()
-config.read("config.ini", "utf-8")
-
+# Graph traversal mode: "bidirectional" or "in_out_bound"
+# Can be overridden via MONGO_GRAPH_BFS_MODE environment variable
 GRAPH_BFS_MODE = os.getenv("MONGO_GRAPH_BFS_MODE", "bidirectional")
 
 
@@ -47,18 +40,13 @@ class ClientManager:
     async def get_client(cls) -> AsyncMongoClient:
         async with cls._lock:
             if cls._instances["db"] is None:
-                uri = os.environ.get(
-                    "MONGO_URI",
-                    config.get(
-                        "mongodb",
-                        "uri",
-                        fallback="mongodb://root:root@localhost:27017/",
-                    ),
-                )
-                database_name = os.environ.get(
-                    "MONGO_DATABASE",
-                    config.get("mongodb", "database", fallback="HybridRAG"),
-                )
+                uri = os.environ.get("MONGO_URI")
+                if not uri:
+                    raise ValueError(
+                        "MONGO_URI environment variable not set. "
+                        "Set it to your MongoDB connection string (e.g., mongodb+srv://...)."
+                    )
+                database_name = os.environ.get("MONGO_DATABASE", "hybridrag")
                 client = AsyncMongoClient(uri)
                 db = client.get_database(database_name)
                 cls._instances["db"] = db

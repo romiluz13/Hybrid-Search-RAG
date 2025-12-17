@@ -79,7 +79,7 @@ reaction_on_message_received = false
 
 [UI]
 # Name of the assistant.
-name = "Assistant"
+name = "HybridRAG"
 
 # default_theme = "dark"
 
@@ -92,7 +92,7 @@ name = "Assistant"
 # default_sidebar_state = "open"
 
 # Description of the assistant. This is used for HTML tags.
-# description = ""
+description = "Intelligent knowledge base search with MongoDB Atlas and Voyage AI"
 
 # Chain of Thought (CoT) display mode. Can be "hidden", "tool_call" or "full".
 cot = "full"
