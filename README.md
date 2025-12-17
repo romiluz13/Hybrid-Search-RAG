@@ -69,7 +69,7 @@
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                                                                          │
 │  🔄 ATOMIC UPDATES         Vector + metadata + graph in one transaction │
-│  🔍 HYBRID SEARCH          Vector + Graph + Keyword with RRF fusion     │
+│  🔍 HYBRID SEARCH          Vector + Keyword via RRF, Graph via modes    │
 │  🧠 KNOWLEDGE GRAPH        Automatic entity & relationship extraction   │
 │  💬 SELF-COMPACTING MEMORY Conversations auto-summarize, never lost     │
 │  🚀 ENTITY BOOSTING        Knowledge graph enhances vector reranking    │
@@ -86,36 +86,41 @@
 
 ## 🔀 How Hybrid Search Works
 
-HybridRAG doesn't just do vector search. It combines **three retrieval methods** using **Reciprocal Rank Fusion (RRF)**:
+HybridRAG combines multiple retrieval methods:
 
 ```
-  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-  │   VECTOR    │     │    GRAPH    │     │   KEYWORD   │
-  │   SEARCH    │     │   SEARCH    │     │   SEARCH    │
-  │             │     │             │     │             │
-  │  Semantic   │     │  Entity     │     │   Text      │
-  │  Similarity │     │  Relations  │     │  Matching   │
-  └──────┬──────┘     └──────┬──────┘     └──────┬──────┘
-         │                   │                   │
-         └───────────────────┼───────────────────┘
-                             │
-                    ┌────────▼────────┐
-                    │                 │
-                    │   RRF FUSION    │
-                    │                 │
-                    │  RRF(d) = Σ 1   │
-                    │         ─────   │
-                    │         k + r   │
-                    │                 │
-                    └────────┬────────┘
-                             │
-                    ┌────────▼────────┐
-                    │  FINAL RANKED   │
-                    │    RESULTS      │
-                    └─────────────────┘
+  ┌─────────────────────────────────────────────────────┐
+  │                  RRF FUSION ($rankFusion)           │
+  │                                                     │
+  │   ┌─────────────┐              ┌─────────────┐      │
+  │   │   VECTOR    │              │   KEYWORD   │      │
+  │   │   SEARCH    │              │   SEARCH    │      │
+  │   │  Semantic   │              │   Text      │      │
+  │   │  Similarity │              │  Matching   │      │
+  │   └──────┬──────┘              └──────┬──────┘      │
+  │          │                            │             │
+  │          └────────────┬───────────────┘             │
+  │                       │                             │
+  │              ┌────────▼────────┐                    │
+  │              │  RRF(d) = Σ 1   │                    │
+  │              │         ─────   │                    │
+  │              │         k + r   │                    │
+  │              └─────────────────┘                    │
+  └─────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────┐
+  │              GRAPH SEARCH ($graphLookup)            │
+  │                                                     │
+  │   ┌─────────────┐    Used in mix/local modes        │
+  │   │  KNOWLEDGE  │    for entity traversal.          │
+  │   │    GRAPH    │    Enhances results via           │
+  │   │  Entities & │    Entity Boosting.               │
+  │   │  Relations  │                                   │
+  │   └─────────────┘                                   │
+  └─────────────────────────────────────────────────────┘
 ```
 
-**Why RRF?** Documents appearing high in multiple search results get boosted. A result ranked #1 in vectors and #3 in graph beats a result ranked #1 in only one method.
+**RRF** combines Vector + Keyword results. **Graph** search via `$graphLookup` traverses entity relationships separately in `mix` and `local` query modes.
 
 ---
 
@@ -190,6 +195,7 @@ asyncio.run(main())
 | `global` | Community summaries | High-level overview |
 | `hybrid` | Local + Global combined | Comprehensive answers |
 | `naive` | Vector search only | Simple similarity |
+| `bypass` | Skip retrieval, direct LLM | Testing/debugging |
 
 ### CLI Interface
 
@@ -315,9 +321,10 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 ```
 ╔═══════════════════════════════════════════════════════════════╗
 ║                                                               ║
-║   Vector Search + Graph Search + Keyword Search = HYBRID      ║
+║   Vector + Keyword = RRF Fusion ($rankFusion)                 ║
+║   Graph (KG) = Entity traversal in mix/local modes            ║
 ║                                                               ║
-║   Reciprocal Rank Fusion merges them all into one result      ║
+║   One MongoDB document. Atomic updates. Never inconsistent.   ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
 ```
