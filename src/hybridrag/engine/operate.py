@@ -312,7 +312,7 @@ async def _handle_entity_relation_summary(
             else:
                 if total_tokens > summary_context_size and len(current_list) <= 2:
                     logger.warning(
-                        f"Summarizing {entity_or_relation_name}: Oversize descpriton found"
+                        f"Summarizing {entity_or_relation_name}: Oversize description found"
                     )
                 # Final summarization of remaining descriptions - LLM will be used
                 final_summary = await _summarize_descriptions(
@@ -342,7 +342,7 @@ async def _handle_entity_relation_summary(
                     current_chunk.append(desc)
                     chunks.append(current_chunk)
                     logger.warning(
-                        f"Summarizing {entity_or_relation_name}: Oversize descpriton found"
+                        f"Summarizing {entity_or_relation_name}: Oversize description found"
                     )
                     current_chunk = []  # next group is empty
                     current_tokens = 0
