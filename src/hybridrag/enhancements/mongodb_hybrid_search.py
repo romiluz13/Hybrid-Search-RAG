@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +45,9 @@ DEFAULT_RRF_CONSTANT = 60
 # numCandidates multiplier (per MongoDB best practices: 10-20x limit)
 # Reference: coleam00 recommendations, ai-agents-meetup patterns
 NUM_CANDIDATES_MULTIPLIER = 20
+
+# [Rule: ops-transaction-runtime-limit] Default aggregation timeout in ms
+_HYBRID_AGGREGATE_TIMEOUT_MS = int(os.getenv("MONGO_AGGREGATE_TIMEOUT_MS", "30000"))
 
 
 def calculate_num_candidates(
@@ -410,7 +414,9 @@ async def hybrid_search_with_rank_fusion(
     ]
 
     try:
-        cursor = await collection.aggregate(pipeline, allowDiskUse=True)
+        cursor = await collection.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=_HYBRID_AGGREGATE_TIMEOUT_MS
+        )
         results = await cursor.to_list(length=None)
 
         logger.info(f"[HYBRID_SEARCH] $rankFusion returned {len(results)} results")
@@ -556,7 +562,9 @@ async def hybrid_search_with_score_fusion(
     ]
 
     try:
-        cursor = await collection.aggregate(pipeline, allowDiskUse=True)
+        cursor = await collection.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=_HYBRID_AGGREGATE_TIMEOUT_MS
+        )
         results = await cursor.to_list(length=None)
 
         logger.info(f"[HYBRID_SEARCH] $scoreFusion returned {len(results)} results")
@@ -734,7 +742,9 @@ async def multi_field_text_search(
     )
 
     try:
-        cursor = await collection.aggregate(pipeline, allowDiskUse=True)
+        cursor = await collection.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=_HYBRID_AGGREGATE_TIMEOUT_MS
+        )
         results = await cursor.to_list(length=None)
 
         search_results = [
@@ -877,7 +887,9 @@ async def text_only_search(
     )
 
     try:
-        cursor = await collection.aggregate(pipeline, allowDiskUse=True)
+        cursor = await collection.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=_HYBRID_AGGREGATE_TIMEOUT_MS
+        )
         results = await cursor.to_list(length=None)
 
         # Convert to SearchResult objects
@@ -940,7 +952,9 @@ async def _fallback_simple_text_search(
     ]
 
     try:
-        cursor = await collection.aggregate(pipeline, allowDiskUse=True)
+        cursor = await collection.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=_HYBRID_AGGREGATE_TIMEOUT_MS
+        )
         results = await cursor.to_list(length=None)
 
         return [
@@ -1230,7 +1244,9 @@ async def vector_only_search(
     pipeline.append({"$match": {"similarity": {"$gte": config.cosine_threshold}}})
 
     try:
-        cursor = await collection.aggregate(pipeline, allowDiskUse=True)
+        cursor = await collection.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=_HYBRID_AGGREGATE_TIMEOUT_MS
+        )
         results = await cursor.to_list(length=None)
 
         # Convert to SearchResult objects
@@ -1374,7 +1390,9 @@ async def vector_search_with_lexical_prefilters(
     pipeline.append({"$match": {"similarity": {"$gte": config.cosine_threshold}}})
 
     try:
-        cursor = await collection.aggregate(pipeline, allowDiskUse=True)
+        cursor = await collection.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=_HYBRID_AGGREGATE_TIMEOUT_MS
+        )
         results = await cursor.to_list(length=None)
 
         search_results = [

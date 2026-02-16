@@ -409,7 +409,8 @@ class ConversationMemory:
             await self.create_session(session_id)
             message_index = 0
 
-        # Insert message into separate collection
+        # Insert message and update session atomically
+        # [Rule: fundamental-use-transactions-when-required]
         message_doc = {
             self._session_id_key: session_id,
             "role": role,
@@ -420,16 +421,33 @@ class ConversationMemory:
         if metadata:
             message_doc["metadata"] = metadata
 
-        await self._messages_collection.insert_one(message_doc)
+        try:
+            from hybridrag.core.transaction_helper import run_with_transaction
 
-        # Update session's message_count and updated_at
-        await self._sessions_collection.update_one(
-            {self._session_id_key: session_id},
-            {
-                "$inc": {"message_count": 1},
-                "$set": {"updated_at": now},
-            },
-        )
+            async def _add_message_txn(session=None):
+                await self._messages_collection.insert_one(message_doc, session=session)
+                await self._sessions_collection.update_one(
+                    {self._session_id_key: session_id},
+                    {
+                        "$inc": {"message_count": 1},
+                        "$set": {"updated_at": now},
+                    },
+                    session=session,
+                )
+
+            await run_with_transaction(
+                self._client, _add_message_txn, fallback_without_transaction=True
+            )
+        except ImportError:
+            # Fallback if transaction_helper not available
+            await self._messages_collection.insert_one(message_doc)
+            await self._sessions_collection.update_one(
+                {self._session_id_key: session_id},
+                {
+                    "$inc": {"message_count": 1},
+                    "$set": {"updated_at": now},
+                },
+            )
 
         logger.debug(f"[MEMORY] Added {role} message to session {session_id}")
 
@@ -522,33 +540,62 @@ class ConversationMemory:
         if not pruned:
             return  # Nothing to prune
 
-        # Summarize pruned messages
+        # Summarize pruned messages and apply atomically
+        # [Rule: fundamental-use-transactions-when-required]
         if self._llm_func:
             new_summary = await self._summarize_messages(pruned, session.summary)
             summary_tokens = self._estimate_tokens(new_summary)
-
-            # Delete pruned messages from collection
             pruned_indexes = [m.get("message_index", 0) for m in pruned]
-            await self._messages_collection.delete_many(
-                {
-                    self._session_id_key: session_id,
-                    "message_index": {"$in": pruned_indexes},
-                }
-            )
 
-            # Update session with new summary
-            await self._sessions_collection.update_one(
-                {self._session_id_key: session_id},
-                {
-                    "$set": {
-                        "summary": new_summary,
-                        "summary_token_count": summary_tokens,
-                        "summary_updated_at": _utcnow(),
-                        "updated_at": _utcnow(),
-                        "message_count": len(messages),
+            try:
+                from hybridrag.core.transaction_helper import run_with_transaction
+
+                async def _compact_with_summary(session_param=None):
+                    await self._messages_collection.delete_many(
+                        {
+                            self._session_id_key: session_id,
+                            "message_index": {"$in": pruned_indexes},
+                        },
+                        session=session_param,
+                    )
+                    await self._sessions_collection.update_one(
+                        {self._session_id_key: session_id},
+                        {
+                            "$set": {
+                                "summary": new_summary,
+                                "summary_token_count": summary_tokens,
+                                "summary_updated_at": _utcnow(),
+                                "updated_at": _utcnow(),
+                                "message_count": len(messages),
+                            }
+                        },
+                        session=session_param,
+                    )
+
+                await run_with_transaction(
+                    self._client,
+                    _compact_with_summary,
+                    fallback_without_transaction=True,
+                )
+            except ImportError:
+                await self._messages_collection.delete_many(
+                    {
+                        self._session_id_key: session_id,
+                        "message_index": {"$in": pruned_indexes},
                     }
-                },
-            )
+                )
+                await self._sessions_collection.update_one(
+                    {self._session_id_key: session_id},
+                    {
+                        "$set": {
+                            "summary": new_summary,
+                            "summary_token_count": summary_tokens,
+                            "summary_updated_at": _utcnow(),
+                            "updated_at": _utcnow(),
+                            "message_count": len(messages),
+                        }
+                    },
+                )
             logger.info(
                 f"[MEMORY] Compacted session {session_id[:8]}...: "
                 f"pruned {len(pruned)} messages, kept {len(messages)}"
@@ -556,22 +603,50 @@ class ConversationMemory:
         else:
             # No LLM - fall back to simple truncation (delete oldest messages)
             pruned_indexes = [m.get("message_index", 0) for m in pruned]
-            await self._messages_collection.delete_many(
-                {
-                    self._session_id_key: session_id,
-                    "message_index": {"$in": pruned_indexes},
-                }
-            )
 
-            await self._sessions_collection.update_one(
-                {self._session_id_key: session_id},
-                {
-                    "$set": {
-                        "updated_at": _utcnow(),
-                        "message_count": len(messages),
+            try:
+                from hybridrag.core.transaction_helper import run_with_transaction
+
+                async def _compact_truncate(session_param=None):
+                    await self._messages_collection.delete_many(
+                        {
+                            self._session_id_key: session_id,
+                            "message_index": {"$in": pruned_indexes},
+                        },
+                        session=session_param,
+                    )
+                    await self._sessions_collection.update_one(
+                        {self._session_id_key: session_id},
+                        {
+                            "$set": {
+                                "updated_at": _utcnow(),
+                                "message_count": len(messages),
+                            }
+                        },
+                        session=session_param,
+                    )
+
+                await run_with_transaction(
+                    self._client,
+                    _compact_truncate,
+                    fallback_without_transaction=True,
+                )
+            except ImportError:
+                await self._messages_collection.delete_many(
+                    {
+                        self._session_id_key: session_id,
+                        "message_index": {"$in": pruned_indexes},
                     }
-                },
-            )
+                )
+                await self._sessions_collection.update_one(
+                    {self._session_id_key: session_id},
+                    {
+                        "$set": {
+                            "updated_at": _utcnow(),
+                            "message_count": len(messages),
+                        }
+                    },
+                )
             logger.warning(
                 f"[MEMORY] No LLM for summarization, truncated {len(pruned)} messages"
             )
@@ -751,7 +826,10 @@ class ConversationMemory:
         skip: int = 0,
     ) -> list[dict[str, Any]]:
         """
-        List conversation sessions.
+        List conversation sessions with last message via $lookup.
+
+        Uses a single aggregation pipeline with $lookup instead of N+1 queries.
+        [Rule: query-batch-operations] [Rule: agg-lookup-index]
 
         Args:
             limit: Max sessions to return
@@ -762,43 +840,57 @@ class ConversationMemory:
         """
         self._ensure_initialized()
 
-        cursor = (
-            self._sessions_collection.find(
-                {},
-                {
+        # Single aggregation with $lookup replaces N+1 pattern
+        pipeline = [
+            {"$sort": {"updated_at": -1}},
+            {"$skip": skip},
+            {"$limit": limit},
+            {
+                "$lookup": {
+                    "from": self._messages_collection_name,
+                    "let": {"sid": f"${self._session_id_key}"},
+                    "pipeline": [
+                        {
+                            "$match": {
+                                "$expr": {"$eq": [f"${self._session_id_key}", "$$sid"]}
+                            }
+                        },
+                        {"$sort": {"message_index": -1}},
+                        {"$limit": 1},
+                        {
+                            "$project": {
+                                "role": 1,
+                                "content": 1,
+                                "timestamp": 1,
+                                "_id": 0,
+                            }
+                        },
+                    ],
+                    "as": "_last_messages",
+                }
+            },
+            {
+                "$project": {
                     self._session_id_key: 1,
                     "created_at": 1,
                     "updated_at": 1,
                     "metadata": 1,
                     "message_count": 1,
-                },
-            )
-            .sort("updated_at", -1)
-            .skip(skip)
-            .limit(limit)
-        )
+                    "_last_messages": 1,
+                }
+            },
+        ]
+
+        cursor = self._sessions_collection.aggregate(pipeline, maxTimeMS=30000)
 
         sessions = []
         async for doc in cursor:
-            session_id = doc[self._session_id_key]
-
-            # Get last message from messages collection
-            last_message_cursor = (
-                self._messages_collection.find({self._session_id_key: session_id})
-                .sort("message_index", -1)
-                .limit(1)
-            )
-            last_message = None
-            async for msg in last_message_cursor:
-                last_message = {
-                    "role": msg["role"],
-                    "content": msg["content"],
-                    "timestamp": msg.get("timestamp"),
-                }
+            last_messages = doc.get("_last_messages", [])
+            last_message = last_messages[0] if last_messages else None
 
             sessions.append(
                 {
-                    "session_id": session_id,
+                    "session_id": doc[self._session_id_key],
                     "created_at": doc.get("created_at"),
                     "updated_at": doc.get("updated_at"),
                     "metadata": doc.get("metadata", {}),

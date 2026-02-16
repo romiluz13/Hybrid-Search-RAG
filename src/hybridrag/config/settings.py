@@ -34,6 +34,52 @@ class Settings(BaseSettings):
         description="Workspace prefix for collections",
     )
 
+    # MongoDB Connection Pool [Rule: consistency-read-concern-levels]
+    mongodb_max_pool_size: int = Field(
+        default=100,
+        ge=1,
+        le=500,
+        description="Maximum connection pool size per client",
+    )
+    mongodb_min_pool_size: int = Field(
+        default=0,
+        ge=0,
+        description="Minimum connection pool size (0 = on-demand)",
+    )
+    mongodb_max_idle_time_ms: int = Field(
+        default=60000,
+        ge=0,
+        description="Maximum idle time for connections in ms",
+    )
+
+    # MongoDB Read/Write Concerns [Rule: fundamental-commit-write-concern]
+    mongodb_read_concern: Literal["local", "majority", "snapshot"] = Field(
+        default="local",
+        description="Read concern level. 'local' matches current behavior. "
+        "'majority' recommended for production consistency.",
+    )
+    mongodb_write_concern: Literal["0", "1", "majority"] = Field(
+        default="1",
+        description="Write concern level. '1' matches current default behavior. "
+        "'majority' recommended for production durability.",
+    )
+
+    # Query Validation
+    max_query_length: int = Field(
+        default=10000,
+        ge=100,
+        le=100000,
+        description="Maximum query length in characters to prevent abuse",
+    )
+
+    # Aggregation Timeout [Rule: ops-transaction-runtime-limit]
+    mongodb_aggregate_timeout_ms: int = Field(
+        default=30000,
+        ge=1000,
+        le=300000,
+        description="Maximum time for aggregation pipelines in ms",
+    )
+
     # Voyage AI (for embeddings and reranking)
     voyage_api_key: SecretStr | None = Field(
         default=None,

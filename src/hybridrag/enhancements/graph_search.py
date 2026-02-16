@@ -35,7 +35,12 @@ if TYPE_CHECKING:
     from pymongo.asynchronous.collection import AsyncCollection
     from pymongo.asynchronous.database import AsyncDatabase
 
+import os
+
 logger = logging.getLogger("hybridrag.graph_search")
+
+# [Rule: ops-transaction-runtime-limit] Default aggregation timeout in ms
+_GRAPH_AGGREGATE_TIMEOUT_MS = int(os.getenv("MONGO_AGGREGATE_TIMEOUT_MS", "30000"))
 
 
 @dataclass
@@ -215,7 +220,9 @@ async def graph_traversal(
     pipeline = build_graph_lookup_pipeline(entity_name, config)
 
     try:
-        cursor = collection.aggregate(pipeline, allowDiskUse=True)
+        cursor = collection.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=_GRAPH_AGGREGATE_TIMEOUT_MS
+        )
         results = await cursor.to_list(length=None)
 
         # Collect unique entities and edges
@@ -396,7 +403,9 @@ async def get_chunks_for_entities(
     ]
 
     try:
-        cursor = collection.aggregate(pipeline, allowDiskUse=True)
+        cursor = collection.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=_GRAPH_AGGREGATE_TIMEOUT_MS
+        )
         results = await cursor.to_list(length=None)
 
         logger.info(

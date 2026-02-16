@@ -108,31 +108,28 @@ class DocumentIngestionPipeline:
         try:
             # Chunks collection indexes
             # 1. document_id - for document lookups and joins
-            await chunks_col.create_index("document_id", background=True)
+            await chunks_col.create_index("document_id")
 
             # 2. metadata.source - for filtering by source file
-            await chunks_col.create_index("metadata.source", background=True)
+            await chunks_col.create_index("metadata.source")
 
             # 3. chunk_index - for ordering chunks within a document
             await chunks_col.create_index(
                 [("document_id", 1), ("chunk_index", 1)],
-                background=True,
             )
 
             # 4. created_at - for time-based queries (descending for recent first)
             await chunks_col.create_index(
                 [("created_at", -1)],
-                background=True,
             )
 
             # Documents collection indexes
             # 1. source - for filtering by source file
-            await documents_col.create_index("source", background=True)
+            await documents_col.create_index("source")
 
             # 2. created_at - for time-based queries
             await documents_col.create_index(
                 [("created_at", -1)],
-                background=True,
             )
 
             logger.debug(

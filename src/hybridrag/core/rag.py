@@ -18,10 +18,25 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from ..config.settings import Settings, get_settings
+
 # Internal RAG engine imports (bundled in hybridrag.engine)
 from ..engine import BaseRAGEngine as _RAGEngine
 from ..engine import EmbeddingFunc
 from ..engine import QueryParam as _QueryParam
+from ..enhancements.entity_boosting import create_boosted_rerank_func
+from ..ingestion import (
+    ChunkingConfig,
+    DocumentIngestionPipeline,
+    IngestionConfig,
+    IngestionResult,
+)
+from ..integrations import (
+    langfuse_enabled,
+    log_ingestion,
+    log_rag_query,
+)
+from ..memory import ConversationMemory
 
 
 # Re-export QueryParam with our own name
@@ -45,21 +60,6 @@ class QueryParam:
             only_need_context=self.only_need_context,
         )
 
-
-from ..config.settings import Settings, get_settings
-from ..enhancements.entity_boosting import create_boosted_rerank_func
-from ..ingestion import (
-    ChunkingConfig,
-    DocumentIngestionPipeline,
-    IngestionConfig,
-    IngestionResult,
-)
-from ..integrations import (
-    langfuse_enabled,
-    log_ingestion,
-    log_rag_query,
-)
-from ..memory import ConversationMemory
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -174,6 +174,29 @@ class HybridRAG:
     _memory: ConversationMemory | None = field(default=None, repr=False)
     _initialized: bool = field(default=False, repr=False)
 
+    def _get_pipeline_embed_func(self) -> Callable:
+        """Get a reusable embedding function for ingestion pipelines.
+
+        Caches the VoyageEmbedder instance to avoid re-creation per call.
+        """
+        if not hasattr(self, "_cached_embedder"):
+            from ..integrations.voyage import VoyageEmbedder
+
+            self._cached_embedder = VoyageEmbedder(
+                api_key=self.settings.voyage_api_key.get_secret_value(),
+                embedding_model=self.settings.voyage_embedding_model,
+                batch_size=64,
+            )
+
+        embedder = self._cached_embedder
+
+        def pipeline_embed_func(texts: list[str]) -> list[list[float]]:
+            """Wrapper to use HybridRAG's cached embedding function."""
+            result = embedder.embed_sync(texts, input_type="document")
+            return result.tolist() if hasattr(result, "tolist") else list(result)
+
+        return pipeline_embed_func
+
     async def initialize(self) -> None:
         """
         Initialize HybridRAG with all components.
@@ -186,7 +209,10 @@ class HybridRAG:
 
         logger.info("[INIT] ========== Starting HybridRAG Initialization ==========")
 
-        # Set MongoDB environment variables
+        # Set MongoDB environment variables for ClientManager (engine layer)
+        # NOTE: MONGO_URI is required by ClientManager in mongo_impl.py
+        # The URI is set here so the engine layer can access it without direct settings access.
+        # This is intentional coupling for backward compatibility.
         os.environ["MONGO_URI"] = self.settings.mongodb_uri.get_secret_value()
         os.environ["MONGO_DATABASE"] = self.settings.mongodb_database
         logger.info(
@@ -474,28 +500,15 @@ class HybridRAG:
         logger.info("[INGEST_FILES] ========== Starting File Ingestion ==========")
         logger.info(f"[INGEST_FILES] Folder: {folder_path}")
 
-        # Get MongoDB database for the pipeline
-        from motor.motor_asyncio import AsyncIOMotorClient
+        # Get MongoDB database for the pipeline using unified client factory
+        from .mongodb_client import create_motor_client_from_settings
 
-        client = AsyncIOMotorClient(self.settings.mongodb_uri.get_secret_value())
+        client = create_motor_client_from_settings(self.settings)
         try:
             db = client[self.settings.mongodb_database]
 
-            # Create embedding function wrapper for the pipeline
-            def pipeline_embed_func(texts: list[str]) -> list[list[float]]:
-                """Wrapper to use HybridRAG's embedding function."""
-                from ..integrations.voyage import VoyageEmbedder
-
-                # Create embedder instance
-                embedder = VoyageEmbedder(
-                    api_key=self.settings.voyage_api_key.get_secret_value(),
-                    embedding_model=self.settings.voyage_embedding_model,
-                    batch_size=64,  # Reduced from default to avoid 120k token limit per batch
-                )
-
-                # Use sync embedding method as this runs in a thread
-                result = embedder.embed_sync(texts, input_type="document")
-                return result.tolist() if hasattr(result, "tolist") else list(result)
+            # Use cached embedding function for the pipeline
+            pipeline_embed_func = self._get_pipeline_embed_func()
 
             # Use default config if not provided
             if config is None:
@@ -544,14 +557,41 @@ class HybridRAG:
                 logger.warning(f"[INGEST_FILES] Errors: {total_errors}")
 
             # Now insert the chunks into the main RAG system for KG extraction
-            # Read back the chunks from MongoDB and insert them
+            # Read back ONLY chunks from this ingestion batch (not entire collection)
+            # [Rule: query-use-projection] [Rule: query-batch-operations]
             if successful > 0:
                 logger.info(
                     "[INGEST_FILES] Inserting chunks into RAG for KG extraction..."
                 )
                 chunks_col = db["ingested_chunks"]
-                cursor = chunks_col.find({})
-                chunks_data = await cursor.to_list(length=None)
+                # Filter by document IDs from this batch to avoid full collection scan
+                batch_doc_ids = [
+                    r.document_id for r in results if r.success and r.document_id
+                ]
+                from bson import ObjectId
+
+                batch_object_ids = []
+                for did in batch_doc_ids:
+                    try:
+                        batch_object_ids.append(ObjectId(did))
+                    except Exception:
+                        logger.warning(
+                            f"Could not convert document_id to ObjectId: {did}"
+                        )
+
+                if batch_object_ids:
+                    cursor = chunks_col.find(
+                        {"document_id": {"$in": batch_object_ids}},
+                        {"content": 1, "metadata.source": 1, "_id": 0},
+                    )
+                else:
+                    # All ObjectId conversions failed - use string IDs instead
+                    # Do NOT fall back to find({}) which scans entire collection
+                    cursor = chunks_col.find(
+                        {"document_id": {"$in": batch_doc_ids}},
+                        {"content": 1, "metadata.source": 1, "_id": 0},
+                    )
+                chunks_data = await cursor.to_list(length=10000)
 
                 if chunks_data:
                     # Extract content and file paths for RAG insertion
@@ -732,22 +772,13 @@ class HybridRAG:
             processed_doc = await processor.extract_url(url)
 
             # Use existing ingestion pipeline to process the document
-            from motor.motor_asyncio import AsyncIOMotorClient
+            from .mongodb_client import create_motor_client_from_settings
 
-            client = AsyncIOMotorClient(self.settings.mongodb_uri.get_secret_value())
+            client = create_motor_client_from_settings(self.settings)
             db = client[self.settings.mongodb_database]
 
-            # Create embedding function wrapper
-            def pipeline_embed_func(texts: list[str]) -> list[list[float]]:
-                from ..integrations.voyage import VoyageEmbedder
-
-                embedder = VoyageEmbedder(
-                    api_key=self.settings.voyage_api_key.get_secret_value(),
-                    embedding_model=self.settings.voyage_embedding_model,
-                    batch_size=64,
-                )
-                result = embedder.embed_sync(texts, input_type="document")
-                return result.tolist() if hasattr(result, "tolist") else list(result)
+            # Use cached embedding function for the pipeline
+            pipeline_embed_func = self._get_pipeline_embed_func()
 
             # Use default config if not provided
             if config is None:
@@ -787,8 +818,12 @@ class HybridRAG:
                     "[INGEST_URL] Inserting chunks into RAG for KG extraction..."
                 )
                 chunks_col = db["ingested_chunks"]
-                cursor = chunks_col.find({"document_id": result.document_id})
-                chunks_data = await cursor.to_list(length=None)
+                # [Rule: query-use-projection] Only fetch needed fields
+                cursor = chunks_col.find(
+                    {"document_id": result.document_id},
+                    {"content": 1, "metadata.source": 1, "_id": 0},
+                )
+                chunks_data = await cursor.to_list(length=10000)
 
                 if chunks_data:
                     contents = [c["content"] for c in chunks_data]
@@ -1021,22 +1056,13 @@ class HybridRAG:
             )
 
             # Use existing ingestion pipeline to process each document
-            from motor.motor_asyncio import AsyncIOMotorClient
+            from .mongodb_client import create_motor_client_from_settings
 
-            client = AsyncIOMotorClient(self.settings.mongodb_uri.get_secret_value())
+            client = create_motor_client_from_settings(self.settings)
             db = client[self.settings.mongodb_database]
 
-            # Create embedding function wrapper
-            def pipeline_embed_func(texts: list[str]) -> list[list[float]]:
-                from ..integrations.voyage import VoyageEmbedder
-
-                embedder = VoyageEmbedder(
-                    api_key=self.settings.voyage_api_key.get_secret_value(),
-                    embedding_model=self.settings.voyage_embedding_model,
-                    batch_size=64,
-                )
-                result = embedder.embed_sync(texts, input_type="document")
-                return result.tolist() if hasattr(result, "tolist") else list(result)
+            # Use cached embedding function for the pipeline
+            pipeline_embed_func = self._get_pipeline_embed_func()
 
             # Use default config if not provided
             if config is None:
@@ -1080,8 +1106,12 @@ class HybridRAG:
                 # Collect chunks for RAG insertion
                 if result.success:
                     chunks_col = db["ingested_chunks"]
-                    cursor = chunks_col.find({"document_id": result.document_id})
-                    chunks_data = await cursor.to_list(length=None)
+                    # [Rule: query-use-projection] Only fetch needed fields
+                    cursor = chunks_col.find(
+                        {"document_id": result.document_id},
+                        {"content": 1, "metadata.source": 1, "_id": 0},
+                    )
+                    chunks_data = await cursor.to_list(length=10000)
                     all_chunks_data.extend(chunks_data)
 
             duration = _time.time() - start_time
@@ -1263,6 +1293,15 @@ class HybridRAG:
             Generated response or context string
         """
         rag = self._ensure_initialized()
+
+        # Validate query length [Rule: input-validation]
+        if not query or not query.strip():
+            raise ValueError("Query cannot be empty")
+        if len(query) > self.settings.max_query_length:
+            raise ValueError(
+                f"Query too long ({len(query)} chars). "
+                f"Maximum allowed: {self.settings.max_query_length} chars."
+            )
 
         # Resolve parameters with defaults
         resolved_mode = mode or self.settings.default_query_mode

@@ -37,6 +37,9 @@ from ..utils import compute_mdhash_id, logger
 # Can be overridden via MONGO_GRAPH_BFS_MODE environment variable
 GRAPH_BFS_MODE = os.getenv("MONGO_GRAPH_BFS_MODE", "bidirectional")
 
+# [Rule: ops-transaction-runtime-limit] Aggregation timeout in ms
+MONGO_AGGREGATE_TIMEOUT_MS = int(os.getenv("MONGO_AGGREGATE_TIMEOUT_MS", "30000"))
+
 
 class ClientManager:
     _instances = {"db": None, "ref_count": 0}
@@ -408,7 +411,9 @@ class MongoDocStatusStorage(DocStatusStorage):
     async def get_status_counts(self) -> dict[str, int]:
         """Get counts of documents in each status"""
         pipeline = [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
-        cursor = await self._data.aggregate(pipeline, allowDiskUse=True)
+        cursor = await self._data.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+        )
         result = await cursor.to_list()
         counts = {}
         for doc in result:
@@ -690,7 +695,9 @@ class MongoDocStatusStorage(DocStatusStorage):
             Dictionary mapping status names to counts, including 'all' field
         """
         pipeline = [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
-        cursor = await self._data.aggregate(pipeline, allowDiskUse=True)
+        cursor = await self._data.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+        )
         result = await cursor.to_list()
 
         counts = {}
@@ -967,7 +974,7 @@ class MongoGraphStorage(BaseGraphStorage):
         ]
 
         cursor = await self.edge_collection.aggregate(
-            outbound_pipeline, allowDiskUse=True
+            outbound_pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
         )
         async for doc in cursor:
             merged_results[doc.get("_id")] = doc.get("degree")
@@ -979,7 +986,7 @@ class MongoGraphStorage(BaseGraphStorage):
         ]
 
         cursor = await self.edge_collection.aggregate(
-            inbound_pipeline, allowDiskUse=True
+            inbound_pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
         )
         async for doc in cursor:
             merged_results[doc.get("_id")] = merged_results.get(
@@ -1035,15 +1042,21 @@ class MongoGraphStorage(BaseGraphStorage):
     # -------------------------------------------------------------------------
     #
 
+    # [Rule: antipattern-massive-arrays] Cap source_ids to prevent unbounded growth
+    _MAX_SOURCE_IDS = 500
+
     async def upsert_node(self, node_id: str, node_data: dict[str, str]) -> None:
         """
         Insert or update a node document.
         """
         update_doc = {"$set": {**node_data}}
         if node_data.get("source_id", ""):
-            update_doc["$set"]["source_ids"] = node_data["source_id"].split(
-                GRAPH_FIELD_SEP
-            )
+            source_ids = node_data["source_id"].split(GRAPH_FIELD_SEP)
+            if len(source_ids) > self._MAX_SOURCE_IDS:
+                logger.warning(
+                    f"source_ids truncated from {len(source_ids)} to {self._MAX_SOURCE_IDS}"
+                )
+            update_doc["$set"]["source_ids"] = source_ids[: self._MAX_SOURCE_IDS]
 
         await self.collection.update_one({"_id": node_id}, update_doc, upsert=True)
 
@@ -1059,9 +1072,12 @@ class MongoGraphStorage(BaseGraphStorage):
 
         update_doc = {"$set": edge_data}
         if edge_data.get("source_id", ""):
-            update_doc["$set"]["source_ids"] = edge_data["source_id"].split(
-                GRAPH_FIELD_SEP
-            )
+            source_ids = edge_data["source_id"].split(GRAPH_FIELD_SEP)
+            if len(source_ids) > self._MAX_SOURCE_IDS:
+                logger.warning(
+                    f"source_ids truncated from {len(source_ids)} to {self._MAX_SOURCE_IDS}"
+                )
+            update_doc["$set"]["source_ids"] = source_ids[: self._MAX_SOURCE_IDS]
 
         edge_data["source_node_id"] = source_node_id
         edge_data["target_node_id"] = target_node_id
@@ -1093,14 +1109,32 @@ class MongoGraphStorage(BaseGraphStorage):
         """
         1) Remove node's doc entirely.
         2) Remove inbound & outbound edges from any doc that references node_id.
-        """
-        # Remove all edges
-        await self.edge_collection.delete_many(
-            {"$or": [{"source_node_id": node_id}, {"target_node_id": node_id}]}
-        )
 
-        # Remove the node doc
-        await self.collection.delete_one({"_id": node_id})
+        Uses transaction wrapper for atomicity with M0/standalone fallback.
+        [Rule: fundamental-use-transactions-when-required]
+        """
+        try:
+            from hybridrag.core.transaction_helper import run_with_transaction
+
+            # Get the underlying client from the database
+            client = self.db.client
+
+            async def _delete_node_txn(session=None):
+                await self.edge_collection.delete_many(
+                    {"$or": [{"source_node_id": node_id}, {"target_node_id": node_id}]},
+                    session=session,
+                )
+                await self.collection.delete_one({"_id": node_id}, session=session)
+
+            await run_with_transaction(
+                client, _delete_node_txn, fallback_without_transaction=True
+            )
+        except ImportError:
+            # Fallback if transaction_helper not available
+            await self.edge_collection.delete_many(
+                {"$or": [{"source_node_id": node_id}, {"target_node_id": node_id}]}
+            )
+            await self.collection.delete_one({"_id": node_id})
 
     #
     # -------------------------------------------------------------------------
@@ -1117,7 +1151,9 @@ class MongoGraphStorage(BaseGraphStorage):
 
         # Use aggregation with allowDiskUse for large datasets
         pipeline = [{"$project": {"_id": 1}}, {"$sort": {"_id": 1}}]
-        cursor = await self.collection.aggregate(pipeline, allowDiskUse=True)
+        cursor = await self.collection.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+        )
         labels = []
         async for doc in cursor:
             labels.append(doc["_id"])
@@ -1198,7 +1234,9 @@ class MongoGraphStorage(BaseGraphStorage):
                 {"$sort": {"degree": -1}},
                 {"$limit": max_nodes},
             ]
-            cursor = await self.edge_collection.aggregate(pipeline, allowDiskUse=True)
+            cursor = await self.edge_collection.aggregate(
+                pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+            )
 
             node_ids = []
             async for doc in cursor:
@@ -1383,7 +1421,9 @@ class MongoGraphStorage(BaseGraphStorage):
             },
         ]
 
-        cursor = await self.collection.aggregate(pipeline, allowDiskUse=True)
+        cursor = await self.collection.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+        )
         node_edges = []
 
         # Two records for node_label are returned capturing outbound and inbound connected_edges
@@ -1655,7 +1695,9 @@ class MongoGraphStorage(BaseGraphStorage):
                 {"$project": {"_id": 1}},
             ]
 
-            cursor = await self.edge_collection.aggregate(pipeline, allowDiskUse=True)
+            cursor = await self.edge_collection.aggregate(
+                pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+            )
             labels = []
             async for doc in cursor:
                 if doc.get("_id"):
@@ -1682,7 +1724,9 @@ class MongoGraphStorage(BaseGraphStorage):
                 {"$project": {"_id": 1, "score": {"$meta": "searchScore"}}},
                 {"$limit": limit},
             ]
-            cursor = await self.collection.aggregate(pipeline)
+            cursor = await self.collection.aggregate(
+                pipeline, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+            )
             labels = [doc["_id"] async for doc in cursor if doc.get("_id")]
             if labels:
                 logger.debug(
@@ -1713,7 +1757,9 @@ class MongoGraphStorage(BaseGraphStorage):
                 {"$project": {"_id": 1, "score": {"$meta": "searchScore"}}},
                 {"$limit": limit},
             ]
-            cursor = await self.collection.aggregate(pipeline)
+            cursor = await self.collection.aggregate(
+                pipeline, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+            )
             labels = [doc["_id"] async for doc in cursor if doc.get("_id")]
             if labels:
                 logger.debug(
@@ -1767,7 +1813,9 @@ class MongoGraphStorage(BaseGraphStorage):
                 {"$sort": {"score": {"$meta": "searchScore"}}},
                 {"$limit": limit},
             ]
-            cursor = await self.collection.aggregate(pipeline)
+            cursor = await self.collection.aggregate(
+                pipeline, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+            )
             labels = [doc["_id"] async for doc in cursor if doc.get("_id")]
             if labels:
                 logger.debug(
@@ -2203,15 +2251,28 @@ class MongoVectorDBStorage(BaseVectorStorage):
                     )
                     return
 
+            # [Rule: index-filter-fields] Declare filter fields for prefiltering
             search_index_model = SearchIndexModel(
                 definition={
                     "fields": [
                         {
                             "type": "vector",
-                            "numDimensions": self.embedding_func.embedding_dim,  # Ensure correct dimensions
+                            "numDimensions": self.embedding_func.embedding_dim,
                             "path": "vector",
-                            "similarity": "cosine",  # Options: euclidean, cosine, dotProduct
-                        }
+                            "similarity": "cosine",
+                        },
+                        {
+                            "type": "filter",
+                            "path": "created_at",
+                        },
+                        {
+                            "type": "filter",
+                            "path": "file_path",
+                        },
+                        {
+                            "type": "filter",
+                            "path": "entity_name",
+                        },
                     ]
                 },
                 name=self._index_name,
@@ -2228,7 +2289,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
             logger.error(error_msg)
             raise SystemExit(
                 f"Failed to create MongoDB vector index. Program cannot continue. {error_msg}"
-            )
+            ) from e
 
     async def upsert(self, data: dict[str, dict[str, Any]]) -> None:
         logger.debug(f"[{self.workspace}] Inserting {len(data)} to {self.namespace}")
@@ -2258,12 +2319,13 @@ class MongoVectorDBStorage(BaseVectorStorage):
         for i, d in enumerate(list_data):
             d["vector"] = np.array(embeddings[i], dtype=np.float32).tolist()
 
-        update_tasks = []
-        for doc in list_data:
-            update_tasks.append(
-                self._data.update_one({"_id": doc["_id"]}, {"$set": doc}, upsert=True)
-            )
-        await asyncio.gather(*update_tasks)
+        # [Rule: query-batch-operations] Use bulk_write instead of individual update_one
+        if list_data:
+            operations = [
+                UpdateOne({"_id": doc["_id"]}, {"$set": doc}, upsert=True)
+                for doc in list_data
+            ]
+            await self._data.bulk_write(operations, ordered=False)
 
         return list_data
 
@@ -2300,11 +2362,15 @@ class MongoVectorDBStorage(BaseVectorStorage):
             query_vector = embedding[0].tolist()
 
         # Build $vectorSearch stage
+        # [Rule: query-numcandidates-tuning] 20x multiplier for good recall
+        # Matches pattern in mongodb_hybrid_search.py
+        top_k = max(top_k, 1)  # Guard against top_k=0 producing numCandidates=0
+        num_candidates = min(top_k * 20, 10000)  # 20x rule, capped at 10000
         vector_search_config: dict[str, Any] = {
             "index": self._index_name,
             "path": "vector",
             "queryVector": query_vector,
-            "numCandidates": 100,
+            "numCandidates": num_candidates,
             "limit": top_k,
         }
 
@@ -2328,7 +2394,9 @@ class MongoVectorDBStorage(BaseVectorStorage):
         ]
 
         # Execute the aggregation pipeline
-        cursor = await self._data.aggregate(pipeline, allowDiskUse=True)
+        cursor = await self._data.aggregate(
+            pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+        )
         results = await cursor.to_list(length=None)
 
         # Format and return the results
@@ -2430,7 +2498,9 @@ class MongoVectorDBStorage(BaseVectorStorage):
         ]
 
         try:
-            cursor = await self._data.aggregate(pipeline, allowDiskUse=True)
+            cursor = await self._data.aggregate(
+                pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+            )
             results = await cursor.to_list(length=None)
 
             logger.info(
@@ -2651,7 +2721,9 @@ class MongoVectorDBStorage(BaseVectorStorage):
             ]
 
         try:
-            cursor = await self._data.aggregate(pipeline, allowDiskUse=True)
+            cursor = await self._data.aggregate(
+                pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+            )
             results = await cursor.to_list(length=None)
 
             logger.info(f"[HYBRID_SEARCH] Returned {len(results)} results")
@@ -2727,7 +2799,9 @@ class MongoVectorDBStorage(BaseVectorStorage):
 
         vector_results = []
         try:
-            cursor = await self._data.aggregate(vector_pipeline, allowDiskUse=True)
+            cursor = await self._data.aggregate(
+                vector_pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+            )
             vector_results = await cursor.to_list(length=None)
             logger.info(
                 f"[MANUAL_RRF] Vector search returned {len(vector_results)} results"
@@ -2750,7 +2824,9 @@ class MongoVectorDBStorage(BaseVectorStorage):
 
         text_results = []
         try:
-            cursor = await self._data.aggregate(text_pipeline, allowDiskUse=True)
+            cursor = await self._data.aggregate(
+                text_pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
+            )
             text_results = await cursor.to_list(length=None)
             logger.info(
                 f"[MANUAL_RRF] Text search returned {len(text_results)} results"
@@ -2907,12 +2983,6 @@ class MongoVectorDBStorage(BaseVectorStorage):
             logger.error(
                 f"[{self.workspace}] Error deleting relations for {entity_name}: {str(e)}"
             )
-
-        except PyMongoError as e:
-            logger.error(
-                f"[{self.workspace}] Error searching by prefix in {self.namespace}: {str(e)}"
-            )
-            return []
 
     async def get_by_id(self, id: str) -> dict[str, Any] | None:
         """Get vector data by its ID
