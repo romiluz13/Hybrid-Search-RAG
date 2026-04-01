@@ -2,10 +2,11 @@
 Unified MongoDB Client Factory.
 
 Centralizes MongoDB client creation with proper connection pool settings.
-Replaces scattered ad-hoc motor.AsyncIOMotorClient instantiations.
+Uses pymongo.AsyncMongoClient (replacing deprecated Motor AsyncIOMotorClient).
 
 [Rule: consistency-read-concern-levels] - Configurable read/write concerns
 [Rule: fundamental-commit-write-concern] - Explicit write concern
+[Rule: mongodb-connection] - Create client once and reuse across application
 """
 
 from __future__ import annotations
@@ -13,16 +14,84 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import AsyncMongoClient
 from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
 
 if TYPE_CHECKING:
-    from motor.motor_asyncio import AsyncIOMotorDatabase
+    from pymongo.asynchronous.database import AsyncDatabase
 
     from ..config.settings import Settings
 
 logger = logging.getLogger("hybridrag.mongodb_client")
+
+# ── Singleton shared client ────────────────────────────────────────────────
+# [Rule: mongodb-connection] Create client once only and reuse across application.
+# Don't manually close connections unless shutting down.
+
+_shared_client: AsyncMongoClient | None = None
+
+
+def get_shared_client(settings: Settings) -> AsyncMongoClient:
+    """Get or create the shared singleton MongoDB async client.
+
+    Creates the client on first call, returns the same instance on subsequent
+    calls. The client is configured with pool settings, retry, and appName
+    per mongodb-connection skill best practices.
+
+    Args:
+        settings: HybridRAG Settings instance with MongoDB configuration.
+
+    Returns:
+        Shared AsyncMongoClient instance.
+    """
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = AsyncMongoClient(
+            settings.mongodb_uri.get_secret_value(),
+            maxPoolSize=settings.mongodb_max_pool_size,
+            minPoolSize=settings.mongodb_min_pool_size,
+            maxIdleTimeMS=settings.mongodb_max_idle_time_ms,
+            serverSelectionTimeoutMS=settings.mongodb_server_selection_timeout_ms,
+            connectTimeoutMS=settings.mongodb_connect_timeout_ms,
+            retryWrites=True,
+            retryReads=True,
+            appName="hybridrag",
+        )
+        logger.info(
+            "[CLIENT] Shared AsyncMongoClient created "
+            f"(pool={settings.mongodb_min_pool_size}-{settings.mongodb_max_pool_size}, "
+            f"serverSelectionTimeout={settings.mongodb_server_selection_timeout_ms}ms, "
+            f"connectTimeout={settings.mongodb_connect_timeout_ms}ms, "
+            f"appName=hybridrag)"
+        )
+    return _shared_client
+
+
+def close_shared_client() -> None:
+    """Close and reset the shared singleton client.
+
+    Call this only during application shutdown. Do not call from
+    individual methods or request handlers.
+    """
+    global _shared_client
+    if _shared_client is not None:
+        _shared_client.close()
+        logger.info("[CLIENT] Shared AsyncMongoClient closed")
+        _shared_client = None
+
+
+def _reset_shared_client() -> None:
+    """Reset the shared client without closing (for tests only).
+
+    This is used in unit tests to reset state between tests without
+    actually closing a real connection.
+    """
+    global _shared_client
+    _shared_client = None
+
+
+# ── Legacy factory functions (kept for backward compatibility) ─────────────
 
 
 def create_motor_client(
@@ -32,20 +101,23 @@ def create_motor_client(
     min_pool_size: int = 0,
     max_idle_time_ms: int = 60000,
     **kwargs: Any,
-) -> AsyncIOMotorClient:
-    """Create a Motor async client with proper pool settings.
+) -> AsyncMongoClient:
+    """Create an async MongoDB client with proper pool settings.
+
+    Note: Prefer get_shared_client() for production code.
+    This factory is kept for backward compatibility and testing.
 
     Args:
         uri: MongoDB connection URI
         max_pool_size: Maximum connection pool size
         min_pool_size: Minimum connection pool size
         max_idle_time_ms: Max idle time for connections in ms
-        **kwargs: Additional kwargs passed to AsyncIOMotorClient
+        **kwargs: Additional kwargs passed to AsyncMongoClient
 
     Returns:
-        Configured AsyncIOMotorClient
+        Configured AsyncMongoClient
     """
-    return AsyncIOMotorClient(
+    return AsyncMongoClient(
         uri,
         maxPoolSize=max_pool_size,
         minPoolSize=min_pool_size,
@@ -54,16 +126,17 @@ def create_motor_client(
     )
 
 
-def create_motor_client_from_settings(settings: Settings) -> AsyncIOMotorClient:
-    """Create a Motor async client from HybridRAG Settings.
+def create_motor_client_from_settings(settings: Settings) -> AsyncMongoClient:
+    """Create an async MongoDB client from HybridRAG Settings.
 
-    Uses pool, concern, and timeout settings from the Settings object.
+    Note: Prefer get_shared_client() for production code.
+    This factory is kept for backward compatibility.
 
     Args:
         settings: HybridRAG Settings instance
 
     Returns:
-        Configured AsyncIOMotorClient
+        Configured AsyncMongoClient
     """
     return create_motor_client(
         uri=settings.mongodb_uri.get_secret_value(),
@@ -74,12 +147,12 @@ def create_motor_client_from_settings(settings: Settings) -> AsyncIOMotorClient:
 
 
 def get_database(
-    client: AsyncIOMotorClient,
+    client: AsyncMongoClient,
     database_name: str,
     *,
     read_concern: str = "local",
     write_concern: str = "1",
-) -> AsyncIOMotorDatabase:
+) -> AsyncDatabase:
     """Get a database handle with proper read/write concerns.
 
     Args:
@@ -91,6 +164,13 @@ def get_database(
     Returns:
         Database handle with configured concerns
     """
+    # [M6] Validate write_concern parameter explicitly
+    valid_concerns = {"0", "1", "majority"}
+    if write_concern not in valid_concerns:
+        raise ValueError(
+            f"Invalid write_concern: {write_concern!r}. Must be one of {valid_concerns}"
+        )
+
     db = client[database_name]
 
     # Apply read concern
@@ -98,8 +178,9 @@ def get_database(
     db = db.with_options(read_concern=rc)
 
     # Apply write concern
+    # [M7] Add wtimeout=10000 when w="majority" to prevent unbounded waits
     if write_concern == "majority":
-        wc = WriteConcern(w="majority")
+        wc = WriteConcern(w="majority", wtimeout=10000)
     elif write_concern == "0":
         wc = WriteConcern(w=0)
     else:
@@ -110,9 +191,9 @@ def get_database(
 
 
 def get_database_from_settings(
-    client: AsyncIOMotorClient,
+    client: AsyncMongoClient,
     settings: Settings,
-) -> AsyncIOMotorDatabase:
+) -> AsyncDatabase:
     """Get a database handle from HybridRAG Settings.
 
     Args:

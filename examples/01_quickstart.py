@@ -33,6 +33,8 @@ from hybridrag import QueryParam, create_hybridrag
 
 async def main() -> None:
     """Basic HybridRAG usage example."""
+    from hybridrag.core.mongodb_client import close_shared_client
+
     print("=" * 60)
     print("HybridRAG Quickstart")
     print("=" * 60)
@@ -42,59 +44,62 @@ async def main() -> None:
     rag = await create_hybridrag()
     print("   ✓ HybridRAG initialized")
 
-    # 2. Sample documents to ingest
-    documents = [
-        """
-        MongoDB Atlas is a fully managed cloud database service that handles
-        deployment, maintenance, and scaling of MongoDB clusters. It provides
-        built-in vector search capabilities through Atlas Search, enabling
-        semantic search across documents using embeddings.
-        """,
-        """
-        Voyage AI provides state-of-the-art embedding models optimized for
-        retrieval. The voyage-3-large model offers 1024-dimensional embeddings
-        with excellent performance on semantic search tasks. They also offer
-        rerank-2.5 for cross-encoder reranking.
-        """,
-        """
-        Hybrid search combines vector similarity search with keyword-based
-        search. MongoDB Atlas supports this through $rankFusion which merges
-        results from $vectorSearch and $search pipelines using Reciprocal
-        Rank Fusion (RRF) algorithm.
-        """,
-    ]
+    try:
+        # 2. Sample documents to ingest
+        documents = [
+            """
+            MongoDB Atlas is a fully managed cloud database service that handles
+            deployment, maintenance, and scaling of MongoDB clusters. It provides
+            built-in vector search capabilities through Atlas Search, enabling
+            semantic search across documents using embeddings.
+            """,
+            """
+            Voyage AI provides state-of-the-art embedding models optimized for
+            retrieval. The voyage-3-large model offers 1024-dimensional embeddings
+            with excellent performance on semantic search tasks. They also offer
+            rerank-2.5 for cross-encoder reranking.
+            """,
+            """
+            Hybrid search combines vector similarity search with keyword-based
+            search. MongoDB Atlas supports this through $rankFusion which merges
+            results from $vectorSearch and $search pipelines using Reciprocal
+            Rank Fusion (RRF) algorithm.
+            """,
+        ]
 
-    # 3. Ingest documents
-    print("\n2. Ingesting documents...")
-    await rag.insert(documents)
-    print(f"   ✓ Ingested {len(documents)} documents")
+        # 3. Ingest documents
+        print("\n2. Ingesting documents...")
+        await rag.insert(documents)
+        print(f"   ✓ Ingested {len(documents)} documents")
 
-    # 4. Query the knowledge base
-    queries = [
-        "What is MongoDB Atlas?",
-        "How does hybrid search work?",
-        "What embedding model does Voyage AI provide?",
-    ]
+        # 4. Query the knowledge base
+        queries = [
+            "What is MongoDB Atlas?",
+            "How does hybrid search work?",
+            "What embedding model does Voyage AI provide?",
+        ]
 
-    print("\n3. Querying the knowledge base...")
-    print("-" * 60)
-
-    for query in queries:
-        print(f"\nQ: {query}")
-
-        # Query with default parameters
-        response = await rag.query(
-            query,
-            param=QueryParam(
-                mode="hybrid",  # Use hybrid search (vector + keyword)
-                top_k=3,  # Return top 3 results
-            ),
-        )
-
-        print(f"A: {response[:500]}...")  # Truncate for readability
+        print("\n3. Querying the knowledge base...")
         print("-" * 60)
 
-    print("\n✓ Quickstart complete!")
+        for query in queries:
+            print(f"\nQ: {query}")
+
+            # Query with default parameters
+            response = await rag.query(
+                query,
+                param=QueryParam(
+                    mode="hybrid",  # Use hybrid search (vector + keyword)
+                    top_k=3,  # Return top 3 results
+                ),
+            )
+
+            print(f"A: {response[:500]}...")  # Truncate for readability
+            print("-" * 60)
+
+        print("\n✓ Quickstart complete!")
+    finally:
+        close_shared_client()
 
 
 if __name__ == "__main__":

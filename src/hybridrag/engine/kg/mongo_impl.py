@@ -33,43 +33,88 @@ from ..kg.shared_storage import get_data_init_lock
 from ..types import KnowledgeGraph, KnowledgeGraphEdge, KnowledgeGraphNode
 from ..utils import compute_mdhash_id, logger
 
+
+def get_collection_name(workspace: str | None, base_name: str) -> str:
+    """Get collection name with optional workspace prefix.
+
+    M25: Extracted from 5+ copy-pasted instances of workspace namespace logic.
+
+    Args:
+        workspace: Optional workspace identifier (None or empty means no prefix)
+        base_name: Base collection name
+
+    Returns:
+        Prefixed collection name if workspace is non-empty, otherwise base_name
+    """
+    if workspace and workspace.strip():
+        return f"{workspace.strip()}_{base_name}"
+    return base_name
+
+
 # Graph traversal mode: "bidirectional" or "in_out_bound"
 # Can be overridden via MONGO_GRAPH_BFS_MODE environment variable
 GRAPH_BFS_MODE = os.getenv("MONGO_GRAPH_BFS_MODE", "bidirectional")
+
+# M11: Default cursor limit to prevent unbounded to_list() calls
+# Per query-optimizer skill: to_list(length=_DEFAULT_CURSOR_LIMIT) is dangerous -- always use explicit limits
+_DEFAULT_CURSOR_LIMIT = 10000
 
 # [Rule: ops-transaction-runtime-limit] Aggregation timeout in ms
 MONGO_AGGREGATE_TIMEOUT_MS = int(os.getenv("MONGO_AGGREGATE_TIMEOUT_MS", "30000"))
 
 
 class ClientManager:
-    _instances = {"db": None, "ref_count": 0}
+    _instances: dict = {"db": None, "client": None, "ref_count": 0}
     _lock = asyncio.Lock()
 
     @classmethod
-    async def get_client(cls) -> AsyncMongoClient:
+    async def get_client(
+        cls,
+        uri: str | None = None,
+        database_name: str | None = None,
+    ) -> AsyncDatabase:
+        """Get or create a shared database handle.
+
+        Args:
+            uri: MongoDB connection URI. Falls back to MONGO_URI env var
+                 for backward compatibility.
+            database_name: Database name. Falls back to MONGO_DATABASE env var,
+                          then 'hybridrag' default.
+
+        Returns:
+            AsyncDatabase handle.
+        """
         async with cls._lock:
             if cls._instances["db"] is None:
-                uri = os.environ.get("MONGO_URI")
-                if not uri:
+                # Prefer passed uri, fall back to env var for backward compat
+                resolved_uri = uri or os.environ.get("MONGO_URI")
+                if not resolved_uri:
                     raise ValueError(
-                        "MONGO_URI environment variable not set. "
-                        "Set it to your MongoDB connection string (e.g., mongodb+srv://...)."
+                        "MongoDB URI not provided. Pass uri parameter or set "
+                        "MONGO_URI environment variable."
                     )
-                database_name = os.environ.get("MONGO_DATABASE", "hybridrag")
-                client = AsyncMongoClient(uri)
-                db = client.get_database(database_name)
+                resolved_db = database_name or os.environ.get(
+                    "MONGO_DATABASE", "hybridrag"
+                )
+                client = AsyncMongoClient(resolved_uri)
+                db = client.get_database(resolved_db)
+                cls._instances["client"] = client
                 cls._instances["db"] = db
                 cls._instances["ref_count"] = 0
             cls._instances["ref_count"] += 1
             return cls._instances["db"]
 
     @classmethod
-    async def release_client(cls, db: AsyncDatabase):
+    async def release_client(cls, db: AsyncDatabase) -> None:
+        """Release a database reference. Closes client when ref_count reaches 0."""
         async with cls._lock:
             if db is not None:
                 if db is cls._instances["db"]:
                     cls._instances["ref_count"] -= 1
                     if cls._instances["ref_count"] == 0:
+                        if cls._instances.get("client"):
+                            cls._instances["client"].close()
+                            cls._instances["client"] = None
                         cls._instances["db"] = None
 
 
@@ -151,7 +196,7 @@ class MongoKVStorage(BaseKVStorage):
 
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
         cursor = self._data.find({"_id": {"$in": ids}})
-        docs = await cursor.to_list(length=None)
+        docs = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
 
         doc_map: dict[str, dict[str, Any]] = {}
         for doc in docs:
@@ -375,7 +420,7 @@ class MongoDocStatusStorage(DocStatusStorage):
 
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
         cursor = self._data.find({"_id": {"$in": ids}})
-        docs = await cursor.to_list(length=None)
+        docs = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
 
         doc_map: dict[str, dict[str, Any]] = {}
         for doc in docs:
@@ -397,16 +442,15 @@ class MongoDocStatusStorage(DocStatusStorage):
         logger.debug(f"[{self.workspace}] Inserting {len(data)} to {self.namespace}")
         if not data:
             return
-        update_tasks: list[Any] = []
+        operations = []
         for k, v in data.items():
             # Ensure chunks_list field exists and is an array
             if "chunks_list" not in v:
                 v["chunks_list"] = []
-            data[k]["_id"] = k
-            update_tasks.append(
-                self._data.update_one({"_id": k}, {"$set": v}, upsert=True)
-            )
-        await asyncio.gather(*update_tasks)
+            v["_id"] = k
+            operations.append(UpdateOne({"_id": k}, {"$set": v}, upsert=True))
+        if operations:
+            await self._data.bulk_write(operations, ordered=False)
 
     async def get_status_counts(self) -> dict[str, int]:
         """Get counts of documents in each status"""
@@ -505,7 +549,9 @@ class MongoDocStatusStorage(DocStatusStorage):
         try:
             # Get indexes for the current collection only
             indexes_cursor = await self._data.list_indexes()
-            existing_indexes = await indexes_cursor.to_list(length=None)
+            existing_indexes = await indexes_cursor.to_list(
+                length=_DEFAULT_CURSOR_LIMIT
+            )
             existing_index_names = {idx.get("name", "") for idx in existing_indexes}
 
             # Define collation configuration for Chinese pinyin sorting
@@ -1568,7 +1614,10 @@ class MongoGraphStorage(BaseGraphStorage):
         pass
 
     async def remove_nodes(self, nodes: list[str]) -> None:
-        """Delete multiple nodes
+        """Delete multiple nodes atomically.
+
+        Uses run_with_transaction to ensure edges and nodes are deleted
+        together. Falls back to non-transactional on standalone/M0.
 
         Args:
             nodes: List of node IDs to be deleted
@@ -1577,18 +1626,25 @@ class MongoGraphStorage(BaseGraphStorage):
         if not nodes:
             return
 
-        # 1. Remove all edges referencing these nodes
-        await self.edge_collection.delete_many(
-            {
-                "$or": [
-                    {"source_node_id": {"$in": nodes}},
-                    {"target_node_id": {"$in": nodes}},
-                ]
-            }
-        )
+        client = self.collection.database.client
 
-        # 2. Delete the node documents
-        await self.collection.delete_many({"_id": {"$in": nodes}})
+        async def _do_remove(session=None):
+            # 1. Remove all edges referencing these nodes
+            await self.edge_collection.delete_many(
+                {
+                    "$or": [
+                        {"source_node_id": {"$in": nodes}},
+                        {"target_node_id": {"$in": nodes}},
+                    ]
+                },
+                session=session,
+            )
+            # 2. Delete the node documents
+            await self.collection.delete_many({"_id": {"$in": nodes}}, session=session)
+
+        from hybridrag.core.transaction_helper import run_with_transaction
+
+        await run_with_transaction(client, _do_remove)
 
         logger.debug(f"[{self.workspace}] Successfully deleted nodes: {nodes}")
 
@@ -1615,34 +1671,52 @@ class MongoGraphStorage(BaseGraphStorage):
 
         logger.debug(f"[{self.workspace}] Successfully deleted edges: {edges}")
 
-    async def get_all_nodes(self) -> list[dict]:
+    async def get_all_nodes(self, limit: int = 0) -> list[dict]:
         """Get all nodes in the graph.
+
+        Args:
+            limit: Maximum number of nodes to return. 0 means return all
+                (up to 10000 safety cap).
 
         Returns:
             A list of all nodes, where each node is a dictionary of its properties
         """
-        cursor = self.collection.find({})
+        cursor = self.collection.find({}).batch_size(500)
+        if limit > 0:
+            cursor = cursor.limit(limit)
+        cap = limit if limit > 0 else 10000
         nodes = []
         async for node in cursor:
             node_dict = dict(node)
             # Add node id (entity_id) to the dictionary for easier access
             node_dict["id"] = node_dict.get("_id")
             nodes.append(node_dict)
+            if len(nodes) >= cap:
+                break
         return nodes
 
-    async def get_all_edges(self) -> list[dict]:
+    async def get_all_edges(self, limit: int = 0) -> list[dict]:
         """Get all edges in the graph.
+
+        Args:
+            limit: Maximum number of edges to return. 0 means return all
+                (up to 10000 safety cap).
 
         Returns:
             A list of all edges, where each edge is a dictionary of its properties
         """
-        cursor = self.edge_collection.find({})
+        cursor = self.edge_collection.find({}).batch_size(500)
+        if limit > 0:
+            cursor = cursor.limit(limit)
+        cap = limit if limit > 0 else 10000
         edges = []
         async for edge in cursor:
             edge_dict = dict(edge)
             edge_dict["source"] = edge_dict.get("source_node_id")
             edge_dict["target"] = edge_dict.get("target_node_id")
             edges.append(edge_dict)
+            if len(edges) >= cap:
+                break
         return edges
 
     async def get_popular_labels(self, limit: int = 300) -> list[str]:
@@ -1835,7 +1909,9 @@ class MongoGraphStorage(BaseGraphStorage):
             )
 
             escaped_query = re.escape(query_strip)
-            regex_condition = {"_id": {"$regex": escaped_query, "$options": "i"}}
+            # M24: Use anchored regex (^pattern) for index prefix scan
+            # Per antipattern-examples: only left-anchored regex uses index efficiently
+            regex_condition = {"_id": {"$regex": f"^{escaped_query}", "$options": "i"}}
             cursor = self.collection.find(regex_condition, {"_id": 1}).limit(limit * 2)
             docs = await cursor.to_list(length=limit * 2)
 
@@ -1886,8 +1962,9 @@ class MongoGraphStorage(BaseGraphStorage):
             return []
 
         # First check if we have any nodes at all
+        # M28: Use estimated_document_count() for unfiltered counts (cheaper than full scan)
         try:
-            node_count = await self.collection.count_documents({})
+            node_count = await self.collection.estimated_document_count()
             if node_count == 0:
                 logger.debug(
                     f"[{self.workspace}] No nodes found in collection {self._collection_name}"
@@ -2025,7 +2102,9 @@ class MongoGraphStorage(BaseGraphStorage):
         try:
             # Get existing indexes
             indexes_cursor = await self.edge_collection.list_indexes()
-            existing_indexes = await indexes_cursor.to_list(length=None)
+            existing_indexes = await indexes_cursor.to_list(
+                length=_DEFAULT_CURSOR_LIMIT
+            )
             existing_index_names = {idx.get("name", "") for idx in existing_indexes}
 
             # Define edge indexes with workspace prefix for isolation
@@ -2084,7 +2163,7 @@ class MongoGraphStorage(BaseGraphStorage):
         try:
             # Check if we're using MongoDB Atlas (has search index capabilities)
             indexes_cursor = await self.collection.list_search_indexes()
-            indexes = await indexes_cursor.to_list(length=None)
+            indexes = await indexes_cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
 
             # Check if we need to rebuild the index
             needs_rebuild = await self._check_if_index_needs_rebuild(
@@ -2243,7 +2322,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
         """Creates an Atlas Vector Search index."""
         try:
             indexes_cursor = await self._data.list_search_indexes()
-            indexes = await indexes_cursor.to_list(length=None)
+            indexes = await indexes_cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
             for index in indexes:
                 if index["name"] == self._index_name:
                     logger.info(
@@ -2397,7 +2476,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
         cursor = await self._data.aggregate(
             pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
         )
-        results = await cursor.to_list(length=None)
+        results = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
 
         # Format and return the results
         return [
@@ -2501,7 +2580,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
             cursor = await self._data.aggregate(
                 pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
             )
-            results = await cursor.to_list(length=None)
+            results = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
 
             logger.info(
                 f"[VECTOR_FILTER] Returned {len(results)} results with prefiltering"
@@ -2537,7 +2616,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
 
         try:
             indexes_cursor = await self._data.list_search_indexes()
-            indexes = await indexes_cursor.to_list(length=None)
+            indexes = await indexes_cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
             for index in indexes:
                 if index["name"] == text_index_name:
                     logger.info(
@@ -2724,7 +2803,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
             cursor = await self._data.aggregate(
                 pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
             )
-            results = await cursor.to_list(length=None)
+            results = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
 
             logger.info(f"[HYBRID_SEARCH] Returned {len(results)} results")
 
@@ -2802,7 +2881,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
             cursor = await self._data.aggregate(
                 vector_pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
             )
-            vector_results = await cursor.to_list(length=None)
+            vector_results = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
             logger.info(
                 f"[MANUAL_RRF] Vector search returned {len(vector_results)} results"
             )
@@ -2827,7 +2906,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
             cursor = await self._data.aggregate(
                 text_pipeline, allowDiskUse=True, maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS
             )
-            text_results = await cursor.to_list(length=None)
+            text_results = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
             logger.info(
                 f"[MANUAL_RRF] Text search returned {len(text_results)} results"
             )
@@ -2960,7 +3039,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
             relations_cursor = self._data.find(
                 {"$or": [{"src_id": entity_name}, {"tgt_id": entity_name}]}
             )
-            relations = await relations_cursor.to_list(length=None)
+            relations = await relations_cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
 
             if not relations:
                 logger.debug(
@@ -3024,7 +3103,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
         try:
             # Query MongoDB for multiple IDs
             cursor = self._data.find({"_id": {"$in": ids}})
-            results = await cursor.to_list(length=None)
+            results = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
 
             # Format results to include id field expected by API and preserve ordering
             formatted_map: dict[str, dict[str, Any]] = {}
@@ -3062,7 +3141,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
         try:
             # Query MongoDB for the specified IDs, only retrieving the vector field
             cursor = self._data.find({"_id": {"$in": ids}}, {"vector": 1})
-            results = await cursor.to_list(length=None)
+            results = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
 
             vectors_dict = {}
             for result in results:
@@ -3105,11 +3184,26 @@ class MongoVectorDBStorage(BaseVectorStorage):
             return {"status": "error", "message": str(e)}
 
 
-async def get_or_create_collection(db: AsyncDatabase, collection_name: str):
-    collection_names = await db.list_collection_names()
+# [L14] Module-level cache of known collection names to avoid
+# calling list_collection_names on every get_or_create_collection invocation.
+_known_collections: set[str] = set()
 
-    if collection_name not in collection_names:
+
+async def get_or_create_collection(db: AsyncDatabase, collection_name: str):
+    global _known_collections
+
+    # Fast path: already known to exist
+    if collection_name in _known_collections:
+        logger.debug(f"Collection '{collection_name}' found in cache.")
+        return db.get_collection(collection_name)
+
+    # Slow path: check server and populate cache
+    collection_names = await db.list_collection_names()
+    _known_collections.update(collection_names)
+
+    if collection_name not in _known_collections:
         collection = await db.create_collection(collection_name)
+        _known_collections.add(collection_name)
         logger.info(f"Created collection: {collection_name}")
         return collection
     else:

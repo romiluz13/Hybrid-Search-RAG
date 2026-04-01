@@ -30,8 +30,11 @@ async def rag(skip_if_no_mongodb):
     settings = get_settings()
     rag_instance = await create_hybridrag(settings=settings)
     yield rag_instance
-    # Cleanup if needed
-    # await rag_instance.clear_collection()
+    # Cleanup test data (best-effort)
+    try:
+        await rag_instance.clear_collection()
+    except Exception:
+        pass  # Best-effort cleanup -- don't fail tests on cleanup errors
 
 
 @pytest.fixture

@@ -172,6 +172,11 @@ class QueryOptimizer:
         vector_weight = vector_weight / total
         text_weight = text_weight / total
 
+        # [L9] Validate weight normalization invariant
+        assert abs(vector_weight + text_weight - 1.0) < 1e-6, (
+            f"Weights must sum to 1.0 after normalization, got {vector_weight + text_weight}"
+        )
+
         reasoning = (
             " | ".join(reasoning_parts) if reasoning_parts else "Default configuration"
         )

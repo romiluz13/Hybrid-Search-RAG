@@ -81,6 +81,20 @@ def build_vector_search_filters(config: VectorSearchFilterConfig) -> dict[str, A
     """
     filters: dict[str, Any] = {}
 
+    # [L12] Validate field names to prevent operator injection
+    all_field_names = (
+        list(config.equality_filters.keys())
+        + list(config.in_filters.keys())
+        + list(config.comparison_filters.keys())
+        + list(config.not_equal_filters.keys())
+    )
+    for field_name in all_field_names:
+        if "$" in field_name or field_name.startswith("."):
+            raise ValueError(
+                f"Invalid filter field name: '{field_name}'. "
+                "Field names must not contain '$' or start with '.'."
+            )
+
     # Date range filters
     if config.start_date or config.end_date:
         date_filter: dict[str, datetime] = {}
@@ -95,8 +109,13 @@ def build_vector_search_filters(config: VectorSearchFilterConfig) -> dict[str, A
     for field_name, value in config.equality_filters.items():
         filters[field_name] = {"$eq": value}
 
-    # In-list filters using $in
+    # In-list filters using $in (merge with existing equality_filters if collision)
     for field_name, values in config.in_filters.items():
+        if field_name in filters:
+            # Merge: if existing is $eq, include that value in $in list
+            existing = filters[field_name]
+            if "$eq" in existing:
+                values = list(values) + [existing["$eq"]]
         filters[field_name] = {"$in": values}
 
     # Direct comparison filters (already in MongoDB format)

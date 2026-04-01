@@ -64,3 +64,35 @@ class TestBuildVectorSearchFilters:
         assert result["created_at"]["$gte"] == start
         assert result["source"]["$eq"] == "api"
         assert result["tags"]["$in"] == ["urgent", "priority"]
+
+    def test_nested_field_path_equality(self):
+        """L24: Dotted paths like 'metadata.category' should work in equality filters."""
+        config = VectorSearchFilterConfig(
+            equality_filters={"metadata.category": "features"}
+        )
+        result = build_vector_search_filters(config)
+
+        assert "metadata.category" in result
+        assert result["metadata.category"]["$eq"] == "features"
+
+    def test_nested_field_path_in_filter(self):
+        """L24: Dotted paths should work in $in filters."""
+        config = VectorSearchFilterConfig(
+            in_filters={"metadata.source": ["docs", "api"]}
+        )
+        result = build_vector_search_filters(config)
+
+        assert "metadata.source" in result
+        assert result["metadata.source"]["$in"] == ["docs", "api"]
+
+    def test_nested_field_path_range(self):
+        """L24: Dotted paths should work in range filters via timestamp_field."""
+        start = datetime(2024, 1, 1)
+        config = VectorSearchFilterConfig(
+            start_date=start,
+            timestamp_field="metadata.timestamp",
+        )
+        result = build_vector_search_filters(config)
+
+        assert "metadata.timestamp" in result
+        assert result["metadata.timestamp"]["$gte"] == start

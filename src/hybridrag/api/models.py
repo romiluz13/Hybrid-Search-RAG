@@ -15,14 +15,19 @@ class IngestRequest(BaseModel):
     documents: list[str] = Field(
         ...,
         min_length=1,
-        description="List of document contents to ingest",
+        max_length=100,
+        description="List of document contents to ingest (max 100)",
     )
     ids: list[str] | None = Field(
         default=None,
         description="Optional document IDs (must match documents length)",
     )
 
-    model_config = {"json_schema_extra": {"example": {"documents": ["Document content 1...", "Document content 2..."]}}}
+    model_config = {
+        "json_schema_extra": {
+            "example": {"documents": ["Document content 1...", "Document content 2..."]}
+        }
+    }
 
 
 class IngestResponse(BaseModel):
@@ -39,7 +44,7 @@ class QueryRequest(BaseModel):
     query: str = Field(
         ...,
         min_length=1,
-        max_length=10000,
+        max_length=5000,
         description="Search query",
     )
     mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"] = Field(
@@ -49,7 +54,7 @@ class QueryRequest(BaseModel):
     top_k: int = Field(
         default=60,
         ge=1,
-        le=200,
+        le=100,
         description="Number of results to retrieve",
     )
     rerank_top_k: int = Field(
@@ -67,7 +72,16 @@ class QueryRequest(BaseModel):
         description="Include source context in response",
     )
 
-    model_config = {"json_schema_extra": {"example": {"query": "What is MongoDB vector search?", "mode": "mix", "top_k": 60, "enable_rerank": True}}}
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "query": "What is MongoDB vector search?",
+                "mode": "mix",
+                "top_k": 60,
+                "enable_rerank": True,
+            }
+        }
+    }
 
 
 class QueryResponse(BaseModel):

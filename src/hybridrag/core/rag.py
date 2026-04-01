@@ -13,7 +13,6 @@ This is the main RAG engine providing:
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -62,13 +61,11 @@ class QueryParam:
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     import numpy as np
 
 logger = logging.getLogger("hybridrag.core")
-logger.setLevel(logging.INFO)
 
 
 def _create_embedding_func(
@@ -88,9 +85,9 @@ def _create_embedding_func(
         batch_size=settings.embedding_batch_size,
     )
     logger.info(
-        f"[INIT] Voyage embedding configured: model={settings.voyage_embedding_model}, dim=1024, batch_size={settings.embedding_batch_size}"
+        f"[INIT] Voyage embedding configured: model={settings.voyage_embedding_model}, dim={settings.embedding_dim}, batch_size={settings.embedding_batch_size}"
     )
-    return embed_func, 1024  # voyage-4-large default dimension
+    return embed_func, settings.embedding_dim  # Use configured dimension
 
 
 def _create_llm_func(settings: Settings) -> Callable[..., str]:
@@ -209,12 +206,9 @@ class HybridRAG:
 
         logger.info("[INIT] ========== Starting HybridRAG Initialization ==========")
 
-        # Set MongoDB environment variables for ClientManager (engine layer)
-        # NOTE: MONGO_URI is required by ClientManager in mongo_impl.py
-        # The URI is set here so the engine layer can access it without direct settings access.
-        # This is intentional coupling for backward compatibility.
-        os.environ["MONGO_URI"] = self.settings.mongodb_uri.get_secret_value()
-        os.environ["MONGO_DATABASE"] = self.settings.mongodb_database
+        # Pass URI directly to ClientManager via parameter (C1 fix: no env var leak)
+        # ClientManager.get_client() now accepts uri + database_name parameters
+        # instead of reading from os.environ.
         logger.info(
             f"[INIT] MongoDB configured: database={self.settings.mongodb_database}"
         )
@@ -500,119 +494,109 @@ class HybridRAG:
         logger.info("[INGEST_FILES] ========== Starting File Ingestion ==========")
         logger.info(f"[INGEST_FILES] Folder: {folder_path}")
 
-        # Get MongoDB database for the pipeline using unified client factory
-        from .mongodb_client import create_motor_client_from_settings
+        # Get MongoDB database using shared singleton client (C2 fix)
+        from .mongodb_client import get_shared_client
 
-        client = create_motor_client_from_settings(self.settings)
-        try:
-            db = client[self.settings.mongodb_database]
+        client = get_shared_client(self.settings)
+        db = client[self.settings.mongodb_database]
 
-            # Use cached embedding function for the pipeline
-            pipeline_embed_func = self._get_pipeline_embed_func()
+        # Use cached embedding function for the pipeline
+        pipeline_embed_func = self._get_pipeline_embed_func()
 
-            # Use default config if not provided
-            if config is None:
-                config = IngestionConfig(
-                    chunking=ChunkingConfig(
-                        max_tokens=512,
-                        chunk_size=1000,
-                        chunk_overlap=200,
-                        tokenizer_model="sentence-transformers/all-MiniLM-L6-v2",
-                    ),
-                    clean_before_ingest=False,  # Don't clean by default
-                    batch_size=self.settings.embedding_batch_size,
-                    enable_audio_transcription=True,
-                )
-
-            # Create and run the ingestion pipeline
-            pipeline = DocumentIngestionPipeline(
-                db=db,
-                embedding_func=pipeline_embed_func,
-                config=config,
-                documents_collection="ingested_documents",
-                chunks_collection="ingested_chunks",
+        # Use default config if not provided
+        if config is None:
+            config = IngestionConfig(
+                chunking=ChunkingConfig(
+                    max_tokens=512,
+                    chunk_size=1000,
+                    chunk_overlap=200,
+                    tokenizer_model="sentence-transformers/all-MiniLM-L6-v2",
+                ),
+                clean_before_ingest=False,  # Don't clean by default
+                batch_size=self.settings.embedding_batch_size,
+                enable_audio_transcription=True,
             )
 
-            import time as _time
+        # Create and run the ingestion pipeline
+        pipeline = DocumentIngestionPipeline(
+            db=db,
+            embedding_func=pipeline_embed_func,
+            config=config,
+            documents_collection="ingested_documents",
+            chunks_collection="ingested_chunks",
+        )
 
-            start_time = _time.time()
+        import time as _time
 
-            results = await pipeline.ingest_folder(folder_path, progress_callback)
+        start_time = _time.time()
 
-            duration = _time.time() - start_time
+        results = await pipeline.ingest_folder(folder_path, progress_callback)
 
-            # Summary statistics
-            total_docs = len(results)
-            successful = sum(1 for r in results if r.success)
-            total_chunks = sum(r.chunks_created for r in results)
-            total_errors = sum(len(r.errors) for r in results)
+        duration = _time.time() - start_time
 
-            logger.info("[INGEST_FILES] ========== File Ingestion Complete ==========")
-            logger.info(
-                f"[INGEST_FILES] Documents: {successful}/{total_docs} successful"
-            )
-            logger.info(f"[INGEST_FILES] Total chunks: {total_chunks}")
-            logger.info(f"[INGEST_FILES] Duration: {duration:.2f}s")
-            if total_errors > 0:
-                logger.warning(f"[INGEST_FILES] Errors: {total_errors}")
+        # Summary statistics
+        total_docs = len(results)
+        successful = sum(1 for r in results if r.success)
+        total_chunks = sum(r.chunks_created for r in results)
+        total_errors = sum(len(r.errors) for r in results)
 
-            # Now insert the chunks into the main RAG system for KG extraction
-            # Read back ONLY chunks from this ingestion batch (not entire collection)
-            # [Rule: query-use-projection] [Rule: query-batch-operations]
-            if successful > 0:
-                logger.info(
-                    "[INGEST_FILES] Inserting chunks into RAG for KG extraction..."
+        logger.info("[INGEST_FILES] ========== File Ingestion Complete ==========")
+        logger.info(f"[INGEST_FILES] Documents: {successful}/{total_docs} successful")
+        logger.info(f"[INGEST_FILES] Total chunks: {total_chunks}")
+        logger.info(f"[INGEST_FILES] Duration: {duration:.2f}s")
+        if total_errors > 0:
+            logger.warning(f"[INGEST_FILES] Errors: {total_errors}")
+
+        # Now insert the chunks into the main RAG system for KG extraction
+        # Read back ONLY chunks from this ingestion batch (not entire collection)
+        # [Rule: query-use-projection] [Rule: query-batch-operations]
+        if successful > 0:
+            logger.info("[INGEST_FILES] Inserting chunks into RAG for KG extraction...")
+            chunks_col = db["ingested_chunks"]
+            # Filter by document IDs from this batch to avoid full collection scan
+            batch_doc_ids = [
+                r.document_id for r in results if r.success and r.document_id
+            ]
+            from bson import ObjectId
+
+            batch_object_ids = []
+            for did in batch_doc_ids:
+                try:
+                    batch_object_ids.append(ObjectId(did))
+                except Exception:
+                    logger.warning(f"Could not convert document_id to ObjectId: {did}")
+
+            if batch_object_ids:
+                cursor = chunks_col.find(
+                    {"document_id": {"$in": batch_object_ids}},
+                    {"content": 1, "metadata.source": 1, "_id": 0},
                 )
-                chunks_col = db["ingested_chunks"]
-                # Filter by document IDs from this batch to avoid full collection scan
-                batch_doc_ids = [
-                    r.document_id for r in results if r.success and r.document_id
+            else:
+                # All ObjectId conversions failed - use string IDs instead
+                # Do NOT fall back to find({}) which scans entire collection
+                cursor = chunks_col.find(
+                    {"document_id": {"$in": batch_doc_ids}},
+                    {"content": 1, "metadata.source": 1, "_id": 0},
+                )
+            chunks_data = await cursor.to_list(length=10000)
+
+            if chunks_data:
+                # Extract content and file paths for RAG insertion
+                contents = [c["content"] for c in chunks_data]
+                file_paths = [
+                    c.get("metadata", {}).get("source", "unknown") for c in chunks_data
                 ]
-                from bson import ObjectId
 
-                batch_object_ids = []
-                for did in batch_doc_ids:
-                    try:
-                        batch_object_ids.append(ObjectId(did))
-                    except Exception:
-                        logger.warning(
-                            f"Could not convert document_id to ObjectId: {did}"
-                        )
+                # Insert into main RAG (this builds the knowledge graph)
+                await self.insert(
+                    documents=contents,
+                    file_paths=file_paths,
+                )
+                logger.info(
+                    f"[INGEST_FILES] Inserted {len(contents)} chunks into RAG system"
+                )
 
-                if batch_object_ids:
-                    cursor = chunks_col.find(
-                        {"document_id": {"$in": batch_object_ids}},
-                        {"content": 1, "metadata.source": 1, "_id": 0},
-                    )
-                else:
-                    # All ObjectId conversions failed - use string IDs instead
-                    # Do NOT fall back to find({}) which scans entire collection
-                    cursor = chunks_col.find(
-                        {"document_id": {"$in": batch_doc_ids}},
-                        {"content": 1, "metadata.source": 1, "_id": 0},
-                    )
-                chunks_data = await cursor.to_list(length=10000)
-
-                if chunks_data:
-                    # Extract content and file paths for RAG insertion
-                    contents = [c["content"] for c in chunks_data]
-                    file_paths = [
-                        c.get("metadata", {}).get("source", "unknown")
-                        for c in chunks_data
-                    ]
-
-                    # Insert into main RAG (this builds the knowledge graph)
-                    await self.insert(
-                        documents=contents,
-                        file_paths=file_paths,
-                    )
-                    logger.info(
-                        f"[INGEST_FILES] Inserted {len(contents)} chunks into RAG system"
-                    )
-
-        finally:
-            # Always close the motor client to prevent connection leaks
-            client.close()
+        # Shared client lifecycle managed globally (C3 fix: no per-method close)
 
         # Log to Langfuse if enabled
         if langfuse_enabled():
@@ -771,10 +755,10 @@ class HybridRAG:
             # Extract content from URL
             processed_doc = await processor.extract_url(url)
 
-            # Use existing ingestion pipeline to process the document
-            from .mongodb_client import create_motor_client_from_settings
+            # Use existing ingestion pipeline with shared client (C2/C3 fix)
+            from .mongodb_client import get_shared_client
 
-            client = create_motor_client_from_settings(self.settings)
+            client = get_shared_client(self.settings)
             db = client[self.settings.mongodb_database]
 
             # Use cached embedding function for the pipeline
@@ -836,7 +820,7 @@ class HybridRAG:
                         f"[INGEST_URL] Inserted {len(contents)} chunks into RAG system"
                     )
 
-            client.close()
+            # Shared client lifecycle managed globally (C3 fix: no per-method close)
 
             # Log to Langfuse if enabled
             if langfuse_enabled():
@@ -1055,10 +1039,10 @@ class HybridRAG:
                 f"[INGEST_WEBSITE] Extracted {len(processed_docs)} pages, processing..."
             )
 
-            # Use existing ingestion pipeline to process each document
-            from .mongodb_client import create_motor_client_from_settings
+            # Use existing ingestion pipeline with shared client (C2/C3 fix)
+            from .mongodb_client import get_shared_client
 
-            client = create_motor_client_from_settings(self.settings)
+            client = get_shared_client(self.settings)
             db = client[self.settings.mongodb_database]
 
             # Use cached embedding function for the pipeline
@@ -1131,7 +1115,7 @@ class HybridRAG:
                     f"[INGEST_WEBSITE] Inserted {len(contents)} chunks into RAG system"
                 )
 
-            client.close()
+            # Shared client lifecycle managed globally (C3 fix: no per-method close)
 
             # Summary statistics
             total_docs = len(results)
@@ -1698,16 +1682,19 @@ Provide a helpful, comprehensive answer."""
                 k: v for k, v in doc_counts.items() if k != "all"
             }
 
-            # Get entity count (MongoVectorDBStorage uses _data attribute)
-            entity_count = await rag.entities_vdb._data.count_documents({})
+            # Get entity count -- use estimated_document_count() for unfiltered
+            # counts (avoids collection scan per mongodb-query-optimizer skill)
+            entity_count = await rag.entities_vdb._data.estimated_document_count()
             stats["entities"] = entity_count
 
             # Get relationship count
-            relationship_count = await rag.relationships_vdb._data.count_documents({})
+            relationship_count = (
+                await rag.relationships_vdb._data.estimated_document_count()
+            )
             stats["relationships"] = relationship_count
 
             # Get chunk count
-            chunk_count = await rag.chunks_vdb._data.count_documents({})
+            chunk_count = await rag.chunks_vdb._data.estimated_document_count()
             stats["chunks"] = chunk_count
 
             # Get recent documents (last 10)

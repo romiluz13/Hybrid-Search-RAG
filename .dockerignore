@@ -1,0 +1,33 @@
+# Secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Version control
+.git
+.gitignore
+
+# Python bytecode
+__pycache__
+*.pyc
+*.pyo
+
+# Test and quality caches
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Coverage and build artifacts
+htmlcov
+dist
+build
+*.egg-info
+
+# Development tooling
+.claude
+.venv
+
+# Documentation and non-runtime files
+docs/plans
+notebooks
+tests

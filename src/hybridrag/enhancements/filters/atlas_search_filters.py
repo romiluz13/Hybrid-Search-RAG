@@ -28,9 +28,12 @@ Example $search with filters in compound query:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+logger = logging.getLogger("hybridrag.filters.atlas_search")
 
 
 @dataclass
@@ -102,6 +105,12 @@ def build_atlas_search_filters(config: AtlasSearchFilterConfig) -> list[dict[str
 
     # In-list filters using compound.should with multiple equals
     for field_name, values in config.in_filters.items():
+        if not values:
+            # [L11] Warn and skip empty filter values instead of silently dropping
+            logger.warning(
+                f"[ATLAS_SEARCH_FILTER] Empty in_filter values for field '{field_name}' -- skipping"
+            )
+            continue
         if len(values) == 1:
             # Single value - use simple equals
             filters.append({"equals": {"path": field_name, "value": values[0]}})
@@ -172,13 +181,8 @@ def build_compound_search_stage(
 
     # Add path weights if provided
     if path_weights:
-        # Convert to Atlas Search score boost format
-        text_clause["text"]["score"] = {
-            "boost": {
-                "path": search_paths[0],  # Primary path for boosting
-                "undefined": 1,  # Default for undefined paths
-            }
-        }
+        # Use correct Atlas Search score boost format: simple numeric value
+        text_clause["text"]["score"] = {"boost": {"value": 2.0}}
 
     # Build compound query
     compound: dict[str, Any] = {"must": [text_clause]}

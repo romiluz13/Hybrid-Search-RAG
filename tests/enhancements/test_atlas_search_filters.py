@@ -68,3 +68,30 @@ class TestBuildAtlasSearchFilters:
         values = [c["equals"]["value"] for c in should_clauses]
         assert "tech" in values
         assert "science" in values
+
+    def test_nested_field_path_equality(self) -> None:
+        """L24: Dotted paths like 'metadata.source' should work in equality filters."""
+        config = AtlasSearchFilterConfig(equality_filters={"metadata.source": "docs"})
+        result = build_atlas_search_filters(config)
+
+        assert len(result) == 1
+        assert "equals" in result[0]
+        assert result[0]["equals"]["path"] == "metadata.source"
+        assert result[0]["equals"]["value"] == "docs"
+
+    def test_nested_field_path_range(self) -> None:
+        """L24: Dotted paths should work in range filters."""
+        start = datetime(2024, 1, 1)
+        end = datetime(2024, 12, 31)
+        config = AtlasSearchFilterConfig(
+            start_date=start,
+            end_date=end,
+            timestamp_field="metadata.timestamp",
+        )
+        result = build_atlas_search_filters(config)
+
+        assert len(result) == 1
+        assert "range" in result[0]
+        assert result[0]["range"]["path"] == "metadata.timestamp"
+        assert result[0]["range"]["gte"] == start
+        assert result[0]["range"]["lte"] == end

@@ -61,7 +61,7 @@ _manager = None
 # Global singleton data for multi-process keyed locks
 _lock_registry: dict[str, mp.synchronize.Lock] | None = None
 _lock_registry_count: dict[str, int] | None = None
-_lock_cleanup_data: dict[str, time.time] | None = None
+_lock_cleanup_data: dict[str, float] | None = None
 _registry_guard = None
 # Timeout for keyed locks in seconds (Default 300)
 CLEANUP_KEYED_LOCKS_AFTER_SECONDS = 300

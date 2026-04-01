@@ -230,3 +230,74 @@ class TestBuildSearchVectorSearchStage:
         )
 
         assert stage["$search"]["vectorSearch"]["exact"] is True
+
+    def test_exact_search_excludes_num_candidates(self):
+        """C8: exact=True and numCandidates are mutually exclusive.
+
+        Per MongoDB docs: numCandidates is required if exact is false or omitted.
+        When exact=True, numCandidates MUST NOT be present.
+        """
+        from hybridrag.enhancements.filters.lexical_prefilters import (
+            build_search_vector_search_stage,
+        )
+
+        stage = build_search_vector_search_stage(
+            index_name="my_index",
+            query_vector=[0.1, 0.2, 0.3],
+            limit=10,
+            exact=True,
+        )
+
+        vs = stage["$search"]["vectorSearch"]
+        assert vs["exact"] is True
+        assert "numCandidates" not in vs, (
+            "numCandidates must NOT be present when exact=True"
+        )
+
+    def test_non_exact_search_includes_num_candidates(self):
+        """When exact is False (default), numCandidates MUST be present."""
+        from hybridrag.enhancements.filters.lexical_prefilters import (
+            build_search_vector_search_stage,
+        )
+
+        stage = build_search_vector_search_stage(
+            index_name="my_index",
+            query_vector=[0.1, 0.2, 0.3],
+            limit=10,
+        )
+
+        vs = stage["$search"]["vectorSearch"]
+        assert "numCandidates" in vs
+        assert "exact" not in vs
+
+    def test_num_candidates_boundary_limit_1(self):
+        """L23: limit=1 should produce numCandidates=20 (1 * 20)."""
+        from hybridrag.enhancements.filters.lexical_prefilters import (
+            build_search_vector_search_stage,
+        )
+
+        stage = build_search_vector_search_stage(
+            index_name="my_index",
+            query_vector=[0.1, 0.2, 0.3],
+            limit=1,
+        )
+
+        vs = stage["$search"]["vectorSearch"]
+        assert vs["limit"] == 1
+        assert vs["numCandidates"] == 20  # 1 * 20
+
+    def test_num_candidates_boundary_limit_100(self):
+        """L23: limit=100 should produce numCandidates=2000 (100 * 20)."""
+        from hybridrag.enhancements.filters.lexical_prefilters import (
+            build_search_vector_search_stage,
+        )
+
+        stage = build_search_vector_search_stage(
+            index_name="my_index",
+            query_vector=[0.1, 0.2, 0.3],
+            limit=100,
+        )
+
+        vs = stage["$search"]["vectorSearch"]
+        assert vs["limit"] == 100
+        assert vs["numCandidates"] == 2000  # 100 * 20

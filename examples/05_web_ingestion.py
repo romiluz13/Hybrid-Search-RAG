@@ -200,19 +200,24 @@ async def example_error_handling():
 
 async def main():
     """Run all examples."""
+    from hybridrag.core.mongodb_client import close_shared_client
+
     print("\n" + "=" * 60)
     print("HybridRAG Example 05: Web Content Ingestion")
     print("=" * 60)
 
-    # Run examples
-    await example_single_url()
-    await example_website_crawl()
-    await example_batch_urls()
-    await example_error_handling()
+    try:
+        # Run examples
+        await example_single_url()
+        await example_website_crawl()
+        await example_batch_urls()
+        await example_error_handling()
 
-    print("\n" + "=" * 60)
-    print("All examples complete!")
-    print("=" * 60)
+        print("\n" + "=" * 60)
+        print("All examples complete!")
+        print("=" * 60)
+    finally:
+        close_shared_client()
 
 
 if __name__ == "__main__":

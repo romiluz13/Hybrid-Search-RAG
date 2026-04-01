@@ -110,6 +110,9 @@ src/hybridrag.egg-info/
 src/mongodb_hybridrag.egg-info/
 
 _internal/
+
+# Glean Audit (investigation/analysis reports)
+glean-audit/
 # Internal Testing Scraps (Root level)
 test_instructions_reranking.py
 test_queries_simple.py

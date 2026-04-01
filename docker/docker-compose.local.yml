@@ -9,10 +9,11 @@ services:
     container_name: hybridrag-mongodb-local
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     environment:
-      - MONGODB_INITDB_ROOT_USERNAME=admin
-      - MONGODB_INITDB_ROOT_PASSWORD=password
+      # NOTE: mongodb/mongodb-atlas-local image ignores MONGODB_INITDB_ROOT_*
+      # Auth is not enforced in local development. For production, use Atlas.
+      - MONGODB_INITDB_DATABASE=hybridrag
     volumes:
       - mongodb-data:/data/db
       - mongodb-config:/data/configdb
@@ -35,8 +36,8 @@ networks:
   hybridrag-network:
     driver: bridge
 
-# Connection URI for .env:
-# MONGODB_URI=mongodb://admin:password@localhost:27017/?authSource=admin
+# Connection URI for .env (atlas-local uses no auth):
+# MONGODB_URI=mongodb://localhost:27017/?directConnection=true
 
 # Quick Commands:
 # Start:    docker-compose -f docker/docker-compose.local.yml up -d

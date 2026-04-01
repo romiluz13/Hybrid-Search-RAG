@@ -44,7 +44,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from pymongo import AsyncMongoClient
+from pymongo.asynchronous.database import AsyncDatabase
 
 
 def _utcnow() -> datetime:
@@ -188,6 +189,7 @@ class ConversationMemory:
         max_token_limit: int = DEFAULT_MAX_TOKEN_LIMIT,
         llm_func: Callable | None = None,
         session_id_key: str = DEFAULT_SESSION_ID_KEY,
+        client: AsyncMongoClient | None = None,
     ):
         """
         Initialize ConversationMemory with self-compaction support.
@@ -201,6 +203,8 @@ class ConversationMemory:
             max_token_limit: Token limit before compaction (summarization)
             llm_func: LLM function for summarization (required for compaction)
             session_id_key: Field name for session ID
+            client: Pre-created AsyncMongoClient to reuse (avoids creating a new one).
+                    When provided, mongodb_uri is not required.
         """
         self._mongodb_uri = mongodb_uri or os.environ.get("MONGODB_URI")
         self._database_name = database or os.environ.get(
@@ -213,14 +217,15 @@ class ConversationMemory:
         self._llm_func = llm_func
         self._session_id_key = session_id_key
 
-        self._client: AsyncIOMotorClient | None = None
-        self._db: AsyncIOMotorDatabase | None = None
+        self._client: AsyncMongoClient | None = client
+        self._owns_client = client is None  # Only close if we created it
+        self._db: AsyncDatabase | None = None
         self._initialized = False
 
-        if not self._mongodb_uri:
+        if not self._mongodb_uri and client is None:
             raise ValueError(
-                "MongoDB URI required. Set MONGODB_URI environment variable "
-                "or pass mongodb_uri parameter."
+                "MongoDB URI or client required. Set MONGODB_URI environment variable, "
+                "pass mongodb_uri parameter, or provide a pre-created client."
             )
 
     async def initialize(self) -> None:
@@ -234,7 +239,10 @@ class ConversationMemory:
             f"messages={self._messages_collection_name}"
         )
 
-        self._client = AsyncIOMotorClient(self._mongodb_uri)
+        # Use injected client if available, otherwise create new one
+        # [Rule: mongodb-connection] Create client once and reuse
+        if self._client is None:
+            self._client = AsyncMongoClient(self._mongodb_uri)
         self._db = self._client[self._database_name]
         self._sessions_collection = self._db[self._sessions_collection_name]
         self._messages_collection = self._db[self._messages_collection_name]
@@ -244,8 +252,17 @@ class ConversationMemory:
         await self._sessions_collection.create_index("created_at")
         await self._sessions_collection.create_index("updated_at")
 
+        # M15: TTL index for automatic session cleanup (90 days)
+        # [Rule: mongodb-schema-design] TTL indexes automatically remove stale documents
+        await self._sessions_collection.create_index(
+            "updated_at",
+            expireAfterSeconds=7776000,  # 60 * 60 * 24 * 90 = 90 days
+            name="session_ttl",
+        )
+
         # Create indexes on messages collection (Rule 1.1 compliant)
-        await self._messages_collection.create_index(self._session_id_key)
+        # NOTE: Single-field session_id_key index removed (M14) -- the compound indexes
+        # below cover this prefix per core-indexing-principles.
         await self._messages_collection.create_index(
             [(self._session_id_key, 1), ("timestamp", 1)]
         )
@@ -352,7 +369,11 @@ class ConversationMemory:
             List of message dicts sorted by message_index
         """
         cursor = self._messages_collection.find(
-            {self._session_id_key: session_id}
+            {self._session_id_key: session_id},
+            {
+                "embedding": 0,
+                "vector": 0,
+            },  # M13: Exclude large fields not needed for messages
         ).sort("message_index", 1)
 
         if limit is not None:
@@ -770,31 +791,46 @@ class ConversationMemory:
         """
         Clear all messages from a session (keeps the session).
 
+        Uses run_with_transaction to ensure message deletion and session
+        update happen atomically. Falls back to non-transactional on
+        standalone/M0 deployments.
+
         Args:
             session_id: Session ID
         """
         self._ensure_initialized()
 
-        # Delete all messages for this session
-        await self._messages_collection.delete_many({self._session_id_key: session_id})
+        async def _do_clear(session=None):
+            # Delete all messages for this session
+            await self._messages_collection.delete_many(
+                {self._session_id_key: session_id}, session=session
+            )
+            # Reset session's message count and summary
+            await self._sessions_collection.update_one(
+                {self._session_id_key: session_id},
+                {
+                    "$set": {
+                        "message_count": 0,
+                        "summary": "",
+                        "summary_token_count": 0,
+                        "updated_at": _utcnow(),
+                    }
+                },
+                session=session,
+            )
 
-        # Reset session's message count and summary
-        await self._sessions_collection.update_one(
-            {self._session_id_key: session_id},
-            {
-                "$set": {
-                    "message_count": 0,
-                    "summary": "",
-                    "summary_token_count": 0,
-                    "updated_at": _utcnow(),
-                }
-            },
-        )
+        from hybridrag.core.transaction_helper import run_with_transaction
+
+        await run_with_transaction(self._client, _do_clear)
         logger.info(f"[MEMORY] Cleared session: {session_id}")
 
     async def delete_session(self, session_id: str) -> bool:
         """
         Delete a session entirely.
+
+        Uses run_with_transaction to ensure message deletion and session
+        deletion happen atomically. Falls back to non-transactional on
+        standalone/M0 deployments.
 
         Args:
             session_id: Session ID
@@ -804,14 +840,23 @@ class ConversationMemory:
         """
         self._ensure_initialized()
 
-        # Delete all messages for this session
-        await self._messages_collection.delete_many({self._session_id_key: session_id})
+        result_holder: dict = {"deleted": False}
 
-        # Delete the session document
-        result = await self._sessions_collection.delete_one(
-            {self._session_id_key: session_id}
-        )
-        deleted = result.deleted_count > 0
+        async def _do_delete(session=None):
+            # Delete all messages for this session
+            await self._messages_collection.delete_many(
+                {self._session_id_key: session_id}, session=session
+            )
+            # Delete the session document
+            result = await self._sessions_collection.delete_one(
+                {self._session_id_key: session_id}, session=session
+            )
+            result_holder["deleted"] = result.deleted_count > 0
+
+        from hybridrag.core.transaction_helper import run_with_transaction
+
+        await run_with_transaction(self._client, _do_delete)
+        deleted = result_holder["deleted"]
 
         if deleted:
             logger.info(f"[MEMORY] Deleted session: {session_id}")
@@ -902,10 +947,14 @@ class ConversationMemory:
         return sessions
 
     async def close(self) -> None:
-        """Close MongoDB connection."""
-        if self._client:
+        """Close MongoDB connection (only if we created it).
+
+        If a shared client was injected via the ``client`` parameter,
+        we do NOT close it -- the caller manages its lifecycle.
+        """
+        if self._client and self._owns_client:
             self._client.close()
-            self._client = None
-            self._db = None
-            self._initialized = False
-            logger.info("[MEMORY] ConversationMemory closed")
+            logger.info("[MEMORY] ConversationMemory closed (own client)")
+        self._client = None
+        self._db = None
+        self._initialized = False

@@ -637,23 +637,26 @@ class BaseRAGEngine:
 
             await initialize_pipeline_status(workspace=self.workspace)
 
-            for storage in (
-                self.full_docs,
-                self.text_chunks,
-                self.full_entities,
-                self.full_relations,
-                self.entity_chunks,
-                self.relation_chunks,
-                self.entities_vdb,
-                self.relationships_vdb,
-                self.chunks_vdb,
-                self.chunk_entity_relation_graph,
-                self.llm_response_cache,
-                self.doc_status,
-            ):
-                if storage:
-                    # logger.debug(f"Initializing storage: {storage}")
-                    await storage.initialize()
+            # M26: Use asyncio.gather for parallel initialization instead of sequential
+            storages_to_init = [
+                s
+                for s in (
+                    self.full_docs,
+                    self.text_chunks,
+                    self.full_entities,
+                    self.full_relations,
+                    self.entity_chunks,
+                    self.relation_chunks,
+                    self.entities_vdb,
+                    self.relationships_vdb,
+                    self.chunks_vdb,
+                    self.chunk_entity_relation_graph,
+                    self.llm_response_cache,
+                    self.doc_status,
+                )
+                if s is not None
+            ]
+            await asyncio.gather(*(s.initialize() for s in storages_to_init))
 
             self._storages_status = StoragesStatus.INITIALIZED
             logger.debug("All storage types initialized")
@@ -795,11 +798,23 @@ class BaseRAGEngine:
         doc_entities = {}  # doc_id -> set of entity_names
         doc_relations = {}  # doc_id -> set of relation_pairs (as tuples)
 
-        # Get all nodes and edges from graph
-        all_nodes = await self.chunk_entity_relation_graph.get_all_nodes()
-        all_edges = await self.chunk_entity_relation_graph.get_all_edges()
+        # M27: Use cursor-based batch processing instead of loading all into memory
+        # Access the collection directly for async iteration with batch_size(500)
+        node_cursor = self.chunk_entity_relation_graph.collection.find({}).batch_size(
+            500
+        )
+        all_nodes = []
+        async for node in node_cursor:
+            all_nodes.append(node)
 
-        # Process all nodes once
+        edge_cursor = self.chunk_entity_relation_graph.edge_collection.find(
+            {}
+        ).batch_size(500)
+        all_edges = []
+        async for edge in edge_cursor:
+            all_edges.append(edge)
+
+        # Process all nodes
         for node in all_nodes:
             if "source_id" in node:
                 entity_id = node.get("entity_id") or node.get("id")
@@ -1817,9 +1832,7 @@ class BaseRAGEngine:
                                             "content_summary": status_doc.content_summary,
                                             "content_length": status_doc.content_length,
                                             "created_at": status_doc.created_at,
-                                            "updated_at": datetime.now(
-                                                UTC
-                                            ).isoformat(),
+                                            "updated_at": datetime.now(UTC).isoformat(),
                                             "file_path": file_path,
                                             "track_id": status_doc.track_id,  # Preserve existing track_id
                                             "metadata": {
@@ -1910,9 +1923,7 @@ class BaseRAGEngine:
                                         "content_summary": status_doc.content_summary,
                                         "content_length": status_doc.content_length,
                                         "created_at": status_doc.created_at,
-                                        "updated_at": datetime.now(
-                                            UTC
-                                        ).isoformat(),
+                                        "updated_at": datetime.now(UTC).isoformat(),
                                         "file_path": file_path,
                                         "track_id": status_doc.track_id,  # Preserve existing track_id
                                         "metadata": {
@@ -1967,9 +1978,7 @@ class BaseRAGEngine:
                                             "content_summary": status_doc.content_summary,
                                             "content_length": status_doc.content_length,
                                             "created_at": status_doc.created_at,
-                                            "updated_at": datetime.now(
-                                                UTC
-                                            ).isoformat(),
+                                            "updated_at": datetime.now(UTC).isoformat(),
                                             "file_path": file_path,
                                             "track_id": status_doc.track_id,  # Preserve existing track_id
                                             "metadata": {

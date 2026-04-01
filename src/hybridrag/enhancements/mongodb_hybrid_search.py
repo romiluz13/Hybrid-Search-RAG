@@ -24,6 +24,7 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import pymongo.errors
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
@@ -348,6 +349,11 @@ async def hybrid_search_with_rank_fusion(
 
         vector_pipeline = [{"$vectorSearch": vector_search_stage}]
 
+    # M16: Add explicit $limit to vector pipeline for $rankFusion
+    # Per mongodb-search-and-ai skill: "$search does not auto-limit results --
+    # always add $limit inside the input pipeline"
+    vector_pipeline.append({"$limit": top_k * 2})
+
     # Build text search stage with compound query
     text_clause: dict[str, Any] = {
         "text": {
@@ -457,10 +463,10 @@ async def hybrid_search_with_rank_fusion(
 
         return formatted_results
 
-    except Exception as e:
-        logger.error(f"[HYBRID_SEARCH] $rankFusion failed: {e}")
+    except pymongo.errors.OperationFailure as e:
+        logger.warning(f"[HYBRID_SEARCH] $rankFusion not supported: {e}")
         # Fall back to manual RRF (works on M0/M2 tiers)
-        logger.warning("[HYBRID_SEARCH] Falling back to manual RRF search")
+        logger.info("[HYBRID_SEARCH] Falling back to manual RRF search")
         try:
             return await manual_hybrid_search_with_rrf(
                 collection, query_text, query_vector, top_k, config
@@ -470,6 +476,9 @@ async def hybrid_search_with_rank_fusion(
             logger.error(f"[HYBRID_SEARCH] Manual RRF also failed: {rrf_err}")
             logger.warning("[HYBRID_SEARCH] Last resort: vector-only search")
             return await vector_only_search(collection, query_vector, top_k, config)
+    except Exception as e:
+        logger.error(f"[HYBRID_SEARCH] Unexpected error: {e}", exc_info=True)
+        raise  # Don't silently fall back on programming errors
 
 
 async def hybrid_search_with_score_fusion(
@@ -556,7 +565,7 @@ async def hybrid_search_with_score_fusion(
                 "scoreDetails": True,
             }
         },
-        {"$addFields": {"fusion_score": {"$meta": "scoreFusionScore"}}},
+        {"$addFields": {"fusion_score": {"$meta": "score"}}},
         {"$limit": top_k},
         {"$project": {"vector": 0}},
     ]
@@ -812,7 +821,11 @@ async def text_only_search(
         config = MongoDBHybridSearchConfig()
 
     if search_paths is None:
-        search_paths = [config.text_search_path]
+        search_paths = (
+            [config.text_search_path]
+            if isinstance(config.text_search_path, str)
+            else config.text_search_path
+        )
 
     # Build the text clause with fuzzy matching
     text_clause: dict[str, Any] = {
@@ -870,7 +883,8 @@ async def text_only_search(
             ]
         )
 
-    # Project final fields
+    # Project final fields (inclusion-only: unlisted fields like 'vector' are
+    # automatically excluded; mixing inclusion with exclusion causes server error)
     pipeline.append(
         {
             "$project": {
@@ -881,7 +895,6 @@ async def text_only_search(
                 "metadata": 1,
                 "document_title": {"$ifNull": ["$document_info.title", ""]},
                 "document_source": {"$ifNull": ["$document_info.source", ""]},
-                "vector": 0,
             }
         }
     )
@@ -1224,7 +1237,8 @@ async def vector_only_search(
             ]
         )
 
-    # Project final fields
+    # Project final fields (inclusion-only: unlisted fields like 'vector' are
+    # automatically excluded; mixing inclusion with exclusion causes server error)
     pipeline.append(
         {
             "$project": {
@@ -1235,7 +1249,6 @@ async def vector_only_search(
                 "metadata": 1,
                 "document_title": {"$ifNull": ["$document_info.title", ""]},
                 "document_source": {"$ifNull": ["$document_info.source", ""]},
-                "vector": 0,
             }
         }
     )
@@ -1370,7 +1383,8 @@ async def vector_search_with_lexical_prefilters(
             ]
         )
 
-    # Project final fields
+    # Project final fields (inclusion-only: unlisted fields like 'vector' are
+    # automatically excluded; mixing inclusion with exclusion causes server error)
     pipeline.append(
         {
             "$project": {
@@ -1381,7 +1395,6 @@ async def vector_search_with_lexical_prefilters(
                 "metadata": 1,
                 "document_title": {"$ifNull": ["$document_info.title", ""]},
                 "document_source": {"$ifNull": ["$document_info.source", ""]},
-                "vector": 0,
             }
         }
     )

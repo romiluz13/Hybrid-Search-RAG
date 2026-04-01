@@ -17,13 +17,13 @@ class TestMongoDBSettings:
         assert settings.mongodb_max_idle_time_ms == 60000
 
     def test_default_concern_settings(self):
-        """Verify concern defaults match current implicit behavior."""
+        """Verify concern defaults are 'majority' for production durability (M1)."""
         settings = Settings(
             mongodb_uri="mongodb://localhost:27017",
             voyage_api_key="test-key",
         )
-        assert settings.mongodb_read_concern == "local"
-        assert settings.mongodb_write_concern == "1"
+        assert settings.mongodb_read_concern == "majority"
+        assert settings.mongodb_write_concern == "majority"
 
     def test_default_query_validation(self):
         """Verify query length limit exists."""

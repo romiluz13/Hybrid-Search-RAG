@@ -159,33 +159,42 @@ def ingest(
     """
 
     async def _ingest():
+        from ..core.mongodb_client import close_shared_client
+
         rag = await create_hybridrag()
+        try:
+            if not path.exists():
+                console.print(f"[red]Error: Path not found: {path}[/red]")
+                raise typer.Exit(1)
 
-        if not path.exists():
-            console.print(f"[red]Error: Path not found: {path}[/red]")
-            raise typer.Exit(1)
+            console.print(f"[bold blue]Ingesting from {path}...[/bold blue]\n")
 
-        console.print(f"[bold blue]Ingesting from {path}...[/bold blue]\n")
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+            ) as progress:
+                task = progress.add_task("Processing...", total=None)
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Processing...", total=None)
+                # L28: Files are ingested sequentially. For large directories,
+                # consider using `hybridrag ingest` with batch-mode support
+                # or the Python API directly with asyncio.gather for parallelism.
+                count = 0
+                if path.is_file():
+                    await rag.ingest_file(str(path))
+                    count = 1
+                elif path.is_dir():
+                    for file in path.rglob("*") if recursive else path.glob("*"):
+                        if file.suffix in [".txt", ".md", ".pdf", ".docx", ".html"]:
+                            progress.update(
+                                task, description=f"Processing {file.name}..."
+                            )
+                            await rag.ingest_file(str(file))
+                            count += 1
 
-            count = 0
-            if path.is_file():
-                await rag.ingest_file(str(path))
-                count = 1
-            elif path.is_dir():
-                for file in path.rglob("*") if recursive else path.glob("*"):
-                    if file.suffix in [".txt", ".md", ".pdf", ".docx", ".html"]:
-                        progress.update(task, description=f"Processing {file.name}...")
-                        await rag.ingest_file(str(file))
-                        count += 1
-
-        console.print(f"\n[green]✓ Successfully ingested {count} file(s)[/green]")
+            console.print(f"\n[green]✓ Successfully ingested {count} file(s)[/green]")
+        finally:
+            close_shared_client()
 
     asyncio.run(_ingest())
 
@@ -199,19 +208,25 @@ def ingest_url(
     """
 
     async def _ingest():
+        from ..core.mongodb_client import close_shared_client
+
         rag = await create_hybridrag()
+        try:
+            console.print(f"[bold blue]Ingesting URL: {url}...[/bold blue]\n")
 
-        console.print(f"[bold blue]Ingesting URL: {url}...[/bold blue]\n")
+            with console.status("[bold green]Fetching and processing...[/bold green]"):
+                result = await rag.ingest_url(url)
 
-        with console.status("[bold green]Fetching and processing...[/bold green]"):
-            result = await rag.ingest_url(url)
-
-        if result.success:
-            console.print(f"[green]✓ Successfully ingested: {result.title}[/green]")
-            console.print(f"[green]  Chunks created: {result.chunks_created}[/green]")
-        else:
-            console.print(f"[red]✗ Failed: {result.errors}[/red]")
-            raise typer.Exit(1)
+            if result.success:
+                console.print(f"[green]✓ Successfully ingested: {result.title}[/green]")
+                console.print(
+                    f"[green]  Chunks created: {result.chunks_created}[/green]"
+                )
+            else:
+                console.print(f"[red]✗ Failed: {result.errors}[/red]")
+                raise typer.Exit(1)
+        finally:
+            close_shared_client()
 
     asyncio.run(_ingest())
 
@@ -232,19 +247,23 @@ def query(
     """
 
     async def _query():
+        from ..core.mongodb_client import close_shared_client
+
         rag = await create_hybridrag()
+        try:
+            console.print(f"\n[bold blue]Query:[/bold blue] {question}\n")
 
-        console.print(f"\n[bold blue]Query:[/bold blue] {question}\n")
+            with console.status("[bold green]Searching...[/bold green]"):
+                answer = await rag.query_with_answer(
+                    query=question,
+                    mode=mode,
+                    top_k=top_k,
+                )
 
-        with console.status("[bold green]Searching...[/bold green]"):
-            answer = await rag.query_with_answer(
-                query=question,
-                mode=mode,
-                top_k=top_k,
-            )
-
-        console.print("[bold blue]Answer:[/bold blue]")
-        console.print(Panel(answer, style="green", padding=(1, 2)))
+            console.print("[bold blue]Answer:[/bold blue]")
+            console.print(Panel(answer, style="green", padding=(1, 2)))
+        finally:
+            close_shared_client()
 
     asyncio.run(_query())
 
@@ -258,6 +277,8 @@ def chat():
     """
 
     async def _chat():
+        from ..core.mongodb_client import close_shared_client
+
         settings = get_settings()
 
         console.print(
@@ -271,11 +292,14 @@ def chat():
             )
         )
 
-        with console.status("[bold green]Initializing...[/bold green]"):
-            rag = await create_hybridrag(settings=settings)
+        try:
+            with console.status("[bold green]Initializing...[/bold green]"):
+                rag = await create_hybridrag(settings=settings)
 
-        console.print("[green]Ready![/green]\n")
-        await conversation_loop(rag)
+            console.print("[green]Ready![/green]\n")
+            await conversation_loop(rag)
+        finally:
+            close_shared_client()
 
     asyncio.run(_chat())
 
@@ -287,28 +311,32 @@ def status():
     """
 
     async def _status():
+        from ..core.mongodb_client import close_shared_client
+
         settings = get_settings()
         rag = await create_hybridrag()
+        try:
+            status_data = await rag.get_status()
 
-        status_data = await rag.get_status()
+            # Create status table
+            table = Table(title="HybridRAG System Status", show_header=True)
+            table.add_column("Setting", style="cyan", no_wrap=True)
+            table.add_column("Value", style="green")
 
-        # Create status table
-        table = Table(title="HybridRAG System Status", show_header=True)
-        table.add_column("Setting", style="cyan", no_wrap=True)
-        table.add_column("Value", style="green")
+            # Add configuration
+            table.add_row("MongoDB Database", settings.MONGODB_DATABASE)
+            table.add_row("Collection", settings.COLLECTION_NAME)
+            table.add_row("LLM Provider", settings.LLM_PROVIDER)
+            table.add_row("LLM Model", settings.LLM_MODEL)
+            table.add_row("Embeddings Model", settings.EMBEDDINGS_MODEL)
 
-        # Add configuration
-        table.add_row("MongoDB Database", settings.MONGODB_DATABASE)
-        table.add_row("Collection", settings.COLLECTION_NAME)
-        table.add_row("LLM Provider", settings.LLM_PROVIDER)
-        table.add_row("LLM Model", settings.LLM_MODEL)
-        table.add_row("Embeddings Model", settings.EMBEDDINGS_MODEL)
+            # Add status data
+            for key, value in status_data.items():
+                table.add_row(key, str(value))
 
-        # Add status data
-        for key, value in status_data.items():
-            table.add_row(key, str(value))
-
-        console.print(table)
+            console.print(table)
+        finally:
+            close_shared_client()
 
     asyncio.run(_status())
 

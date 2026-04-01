@@ -15,13 +15,22 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any, TypeVar
 
+from pymongo.asynchronous.mongo_client import AsyncMongoClient
+from pymongo.errors import ConnectionFailure, OperationFailure
+from pymongo.read_concern import ReadConcern
+from pymongo.write_concern import WriteConcern
+
 logger = logging.getLogger("hybridrag.transactions")
+
+# Error codes that indicate transactions are not supported
+# 20: IllegalOperation, 263: OperationNotSupportedInTransaction, 13435: NotPrimaryOrSecondary
+TRANSACTION_NOT_SUPPORTED_CODES = {20, 263, 13435}
 
 T = TypeVar("T")
 
 
 async def run_with_transaction(
-    client: Any,
+    client: AsyncMongoClient,
     callback: Callable[..., Coroutine[Any, Any, T]],
     *,
     fallback_without_transaction: bool = True,
@@ -35,7 +44,7 @@ async def run_with_transaction(
     standalone mongod), falls back to running without a transaction.
 
     Args:
-        client: Motor AsyncIOMotorClient instance
+        client: pymongo.AsyncMongoClient instance
         callback: Async function that receives a session parameter.
                   Must be idempotent for retry safety.
         fallback_without_transaction: If True, run without transaction
@@ -66,30 +75,47 @@ async def run_with_transaction(
                 nonlocal result
                 result = await callback(session=s)
 
-            await session.with_transaction(_txn_body)
+            # [M9] Pass read_concern and write_concern to with_transaction
+            # per mongodb-connection skill: transactions need "snapshot" read
+            # and "majority" write for consistency guarantees.
+            await session.with_transaction(
+                _txn_body,
+                read_concern=ReadConcern("snapshot"),
+                write_concern=WriteConcern("majority"),
+            )
             return result
 
-    except Exception as e:
-        error_str = str(e).lower()
-        # Check for transaction-not-supported errors
-        transaction_not_supported = any(
-            marker in error_str
-            for marker in [
-                "transaction numbers",
-                "transactions are not supported",
-                "command not supported",
-                "no such command",
-                "illegal_operation",
-                "transaction is not supported",
-            ]
+    except (OperationFailure, ConnectionFailure) as e:
+        # Check error codes first (more reliable than string matching)
+        is_txn_not_supported = (
+            hasattr(e, "code") and e.code in TRANSACTION_NOT_SUPPORTED_CODES
         )
 
-        if transaction_not_supported and fallback_without_transaction:
+        # String fallback for errors without proper codes
+        if not is_txn_not_supported:
+            error_str = str(e).lower()
+            is_txn_not_supported = any(
+                marker in error_str
+                for marker in [
+                    "transaction numbers",
+                    "transactions are not supported",
+                    "command not supported",
+                    "no such command",
+                    "illegal_operation",
+                    "transaction is not supported",
+                ]
+            )
+
+        if is_txn_not_supported and fallback_without_transaction:
             logger.warning(
-                "[TRANSACTION] Transactions not supported on this deployment. "
+                "[TRANSACTION] Transactions not supported on this deployment "
+                f"(code={getattr(e, 'code', 'N/A')}). "
                 "Falling back to non-transactional execution."
             )
             return await callback(session=None)
 
-        # Re-raise for actual errors
+        # Re-raise for actual MongoDB errors
+        raise
+    except Exception:
+        # Non-MongoDB errors (KeyboardInterrupt, SystemExit, etc.) are not caught
         raise

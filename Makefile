@@ -224,9 +224,9 @@ atlas-check: ## Check MongoDB connection
 from hybridrag.config import get_settings; \
 from pymongo import MongoClient; \
 s = get_settings(); \
-c = MongoClient(s.MONGODB_URI); \
+c = MongoClient(s.mongodb_uri.get_secret_value(), serverSelectionTimeoutMS=5000, connectTimeoutMS=5000); \
 print(f'Connected to: {c.server_info()[\"version\"]}'); \
-print(f'Database: {s.MONGODB_DATABASE}')"
+print(f'Database: {s.mongodb_database}')"
 
 atlas-indexes: ## Show MongoDB Atlas index status
 	@echo "$(BLUE)Checking Atlas Search indexes...$(NC)"
@@ -244,6 +244,10 @@ for coll in db.list_collection_names(): \
 #---------------------------------------------------------------------------
 # Quick Commands
 #---------------------------------------------------------------------------
+
+audit: ## Run pip-audit for dependency vulnerabilities
+	@echo "$(BLUE)Running pip-audit...$(NC)"
+	@$(VENV)/bin/pip-audit || echo "$(YELLOW)pip-audit not installed. Run: pip install pip-audit$(NC)"
 
 check: lint test ## Run linting and tests
 

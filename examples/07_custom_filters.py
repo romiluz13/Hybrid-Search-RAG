@@ -281,9 +281,7 @@ async def example_practical_use_case():
     query = "How does search work?"
 
     # Search only in 'features' category
-    VectorSearchFilterConfig(
-        equality_filters={"metadata.category": "features"}
-    )
+    VectorSearchFilterConfig(equality_filters={"metadata.category": "features"})
 
     print(f"\nQuery: {query}")
     print("Filter: category='features'\n")
@@ -299,26 +297,31 @@ async def example_practical_use_case():
 
 async def main():
     """Run all examples."""
+    from hybridrag.core.mongodb_client import close_shared_client
+
     print("\n" + "=" * 60)
     print("HybridRAG Example 07: Custom Filters")
     print("=" * 60)
 
-    # Run examples
-    await example_vector_search_filters()
-    await example_atlas_search_filters()
-    await example_date_range_filters()
-    await example_in_filters()
-    await example_combined_filters()
-    await example_practical_use_case()
+    try:
+        # Run examples
+        await example_vector_search_filters()
+        await example_atlas_search_filters()
+        await example_date_range_filters()
+        await example_in_filters()
+        await example_combined_filters()
+        await example_practical_use_case()
 
-    print("\n" + "=" * 60)
-    print("All examples complete!")
-    print("=" * 60)
-    print("\nKey Takeaways:")
-    print("  - Vector search uses MongoDB standard syntax ($eq, $gte, $in)")
-    print("  - Atlas Search uses Atlas-specific syntax (equals, range)")
-    print("  - Both filter systems are type-safe and builder-based")
-    print("  - Filters improve performance and relevance")
+        print("\n" + "=" * 60)
+        print("All examples complete!")
+        print("=" * 60)
+        print("\nKey Takeaways:")
+        print("  - Vector search uses MongoDB standard syntax ($eq, $gte, $in)")
+        print("  - Atlas Search uses Atlas-specific syntax (equals, range)")
+        print("  - Both filter systems are type-safe and builder-based")
+        print("  - Filters improve performance and relevance")
+    finally:
+        close_shared_client()
 
 
 if __name__ == "__main__":

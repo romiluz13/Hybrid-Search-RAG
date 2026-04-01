@@ -24,6 +24,7 @@ class SearchPreset:
         top_k: Number of results to return
         graph_traversal: Enable graph traversal
         description: Human-readable description
+        rank_fusion_weights: Weights dict for $rankFusion combination (auto-generated)
     """
 
     name: str
@@ -35,9 +36,10 @@ class SearchPreset:
     description: str = ""
 
     def __post_init__(self):
-        """Validate weights."""
+        """Validate weights and generate rank_fusion_weights."""
         total = self.vector_weight + self.text_weight
-        if self.entity_weight:
+        # [L17] Use 'is not None' instead of truthiness to handle entity_weight=0.0
+        if self.entity_weight is not None:
             total += self.entity_weight
 
         if not (0.99 <= total <= 1.01):  # Allow small floating point error
@@ -46,6 +48,12 @@ class SearchPreset:
                 f"(vector={self.vector_weight}, text={self.text_weight}, "
                 f"entity={self.entity_weight})"
             )
+
+        # Generate $rankFusion combination weights from preset
+        self.rank_fusion_weights: dict[str, float] = {
+            "vector": self.vector_weight,
+            "text": self.text_weight,
+        }
 
 
 # Predefined presets
@@ -134,12 +142,22 @@ def list_presets() -> dict[str, str]:
     return {name: preset.description for name, preset in PRESETS.items()}
 
 
+# [L18] Set of built-in preset names that cannot be overwritten
+_BUILTIN_PRESETS: frozenset[str] = frozenset(PRESETS.keys())
+
+
 def register_preset(preset: SearchPreset) -> None:
     """
     Register a custom preset.
 
+    Built-in presets (balanced, semantic, keyword, comprehensive, fast,
+    precise, exploratory) cannot be overwritten.
+
     Args:
         preset: SearchPreset instance to register
+
+    Raises:
+        ValueError: If attempting to overwrite a built-in preset
 
     Example:
         >>> custom = SearchPreset(
@@ -151,6 +169,11 @@ def register_preset(preset: SearchPreset) -> None:
         ... )
         >>> register_preset(custom)
     """
+    if preset.name in _BUILTIN_PRESETS:
+        raise ValueError(
+            f"Cannot overwrite built-in preset '{preset.name}'. "
+            f"Built-in presets: {', '.join(sorted(_BUILTIN_PRESETS))}"
+        )
     PRESETS[preset.name] = preset
 
 

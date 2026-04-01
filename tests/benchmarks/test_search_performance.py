@@ -4,6 +4,11 @@ Search performance benchmarks.
 Measures query latency and throughput for different search modes.
 
 Requires pytest-benchmark: pip install pytest-benchmark
+
+Note: These tests are synchronous because pytest-benchmark's benchmark()
+callable does not support async functions. asyncio.run() is used to bridge
+the async RAG calls into the sync benchmark harness. This is safe because
+these are sync test functions (no running event loop to conflict with).
 """
 
 import asyncio
@@ -15,22 +20,19 @@ pytest.importorskip("pytest_benchmark")
 
 
 @pytest.mark.benchmark
-@pytest.mark.asyncio
-async def test_hybrid_search_latency(benchmark, rag, benchmark_queries):
+def test_hybrid_search_latency(benchmark, rag, benchmark_queries):
     """Benchmark hybrid search latency."""
     query = benchmark_queries[0]
 
     async def search():
         return await rag.query(query=query, mode="hybrid", top_k=10)
 
-    # Benchmark
     result = benchmark(lambda: asyncio.run(search()))
     assert len(result) > 0, "Should return results"
 
 
 @pytest.mark.benchmark
-@pytest.mark.asyncio
-async def test_vector_search_latency(benchmark, rag, benchmark_queries):
+def test_vector_search_latency(benchmark, rag, benchmark_queries):
     """Benchmark vector search latency."""
     query = benchmark_queries[0]
 
@@ -42,8 +44,7 @@ async def test_vector_search_latency(benchmark, rag, benchmark_queries):
 
 
 @pytest.mark.benchmark
-@pytest.mark.asyncio
-async def test_batch_queries(benchmark, rag, benchmark_queries):
+def test_batch_queries(benchmark, rag, benchmark_queries):
     """Benchmark batch query throughput."""
 
     async def batch_search():

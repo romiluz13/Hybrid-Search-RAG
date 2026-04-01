@@ -14,11 +14,14 @@ This is the main entry point for batch document ingestion.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from hybridrag.core.transaction_helper import run_with_transaction
 
 from .chunker import create_chunker
 from .document_processor import DocumentProcessor, create_document_processor
@@ -225,7 +228,7 @@ class DocumentIngestionPipeline:
             IngestionResult with details of the ingestion.
         """
         file_path = Path(file_path).resolve()
-        start_time = datetime.now()
+        start_time = datetime.now(UTC)
         errors = []
 
         try:
@@ -304,7 +307,7 @@ class DocumentIngestionPipeline:
         Returns:
             IngestionResult with details of the ingestion.
         """
-        start_time = datetime.now()
+        start_time = datetime.now(UTC)
 
         try:
             # Create ProcessedDocument from text
@@ -388,9 +391,19 @@ class DocumentIngestionPipeline:
             embeddings = await asyncio.to_thread(self.embedding_func, batch)
             all_embeddings.extend(embeddings)
 
-        # Attach embeddings to chunks
+        # Attach embeddings to chunks and validate dimension [L16]
         for chunk, embedding in zip(chunks, all_embeddings, strict=False):
             chunk.embedding = embedding
+
+        # [L16] Validate embedding dimensions are consistent
+        if all_embeddings:
+            expected_dim = len(all_embeddings[0])
+            for i, embedding in enumerate(all_embeddings):
+                if len(embedding) != expected_dim:
+                    raise ValueError(
+                        f"Embedding dimension mismatch at chunk {i}: "
+                        f"expected {expected_dim}, got {len(embedding)}"
+                    )
 
         return chunks
 
@@ -399,60 +412,93 @@ class DocumentIngestionPipeline:
         processed: ProcessedDocument,
         chunks: list[DocumentChunk],
     ) -> str:
-        """Store document and chunks in MongoDB."""
+        """Store document and chunks in MongoDB atomically.
+
+        Uses run_with_transaction to ensure parent document and chunks are
+        inserted together. If chunk insertion fails, the parent document
+        is rolled back -- no orphaned parents.
+
+        Falls back to non-transactional execution on standalone/M0 deployments
+        that do not support transactions.
+        """
         documents_col = self.db[self.documents_collection]
         chunks_col = self.db[self.chunks_collection]
 
-        # Insert document
+        # M30: Compute content hash for duplicate detection
+        # [Rule: mongodb-schema-design] Prevent duplicate ingestion via content_hash
+        content_hash = hashlib.sha256(processed.content.encode()).hexdigest()
+
+        # Check for existing document with same content hash
+        existing = await documents_col.find_one({"content_hash": content_hash})
+        if existing:
+            logger.info(
+                f"[PIPELINE] Duplicate document detected: {content_hash[:12]}. "
+                f"Returning existing ID: {existing['_id']}"
+            )
+            return str(existing["_id"])
+
+        # Build document dict
         doc_dict = {
             "title": processed.title,
             "source": processed.source,
             "content": processed.content,
+            "content_hash": content_hash,
             "metadata": processed.metadata,
             "format_type": processed.format_type,
-            "created_at": datetime.now(),
+            "created_at": datetime.now(UTC),
         }
 
-        result = await documents_col.insert_one(doc_dict)
-        document_id = result.inserted_id
-
-        # Insert chunks
+        # Build chunk dicts (document_id assigned inside transaction)
         chunk_dicts = []
         for chunk in chunks:
             chunk_dict = {
-                "document_id": document_id,
                 "content": chunk.content,
-                "embedding": chunk.embedding,  # List of floats for MongoDB
+                "embedding": chunk.embedding,
                 "chunk_index": chunk.index,
                 "metadata": chunk.metadata,
                 "token_count": chunk.token_count,
-                "created_at": datetime.now(),
+                "created_at": datetime.now(UTC),
             }
             chunk_dicts.append(chunk_dict)
 
-        if chunk_dicts:
-            await chunks_col.insert_many(chunk_dicts, ordered=False)
+        async def _do_insert(session=None):
+            result = await documents_col.insert_one(doc_dict, session=session)
+            document_id = result.inserted_id
+            for chunk_dict in chunk_dicts:
+                chunk_dict["document_id"] = document_id
+            if chunk_dicts:
+                await chunks_col.insert_many(
+                    chunk_dicts, ordered=False, session=session
+                )
+            return str(document_id)
 
-        return str(document_id)
+        client = self.db.client
+        return await run_with_transaction(client, _do_insert)
 
     async def _clean_collections(self) -> None:
-        """Clean existing data from collections."""
+        """Clean existing data from collections atomically.
+
+        M31: Uses run_with_transaction to ensure both collections are
+        cleaned atomically. Falls back to non-transactional on standalone/M0.
+        """
         logger.warning("Cleaning existing data from MongoDB...")
 
         documents_col = self.db[self.documents_collection]
         chunks_col = self.db[self.chunks_collection]
 
-        # Delete chunks first
-        chunks_result = await chunks_col.delete_many({})
-        logger.info(f"Deleted {chunks_result.deleted_count} chunks")
+        async def _do_clean(session=None):
+            chunks_result = await chunks_col.delete_many({}, session=session)
+            logger.info(f"Deleted {chunks_result.deleted_count} chunks")
 
-        # Delete documents
-        docs_result = await documents_col.delete_many({})
-        logger.info(f"Deleted {docs_result.deleted_count} documents")
+            docs_result = await documents_col.delete_many({}, session=session)
+            logger.info(f"Deleted {docs_result.deleted_count} documents")
+
+        client = self.db.client
+        await run_with_transaction(client, _do_clean)
 
     def _calc_time_ms(self, start_time: datetime) -> float:
         """Calculate elapsed time in milliseconds."""
-        return (datetime.now() - start_time).total_seconds() * 1000
+        return (datetime.now(UTC) - start_time).total_seconds() * 1000
 
 
 def create_ingestion_pipeline(

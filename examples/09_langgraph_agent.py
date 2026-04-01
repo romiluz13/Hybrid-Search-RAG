@@ -485,33 +485,38 @@ async def run_demo_queries(agent: StateGraph) -> None:
 
 async def main() -> None:
     """Main entry point for the LangGraph agent example."""
+    from hybridrag.core.mongodb_client import close_shared_client
+
     print("=" * 60)
     print("LangGraph Agent with HybridRAG")
     print("=" * 60)
     print("\nThis example demonstrates building an AI agent that uses")
     print("HybridRAG as a tool for knowledge retrieval.\n")
 
-    # Initialize knowledge base
-    await initialize_knowledge_base()
-
-    # Create the agent
-    print("\n3. Creating LangGraph agent...")
-    agent = create_agent_graph()
-    print("   Done: Agent created with HybridRAG tools")
-
-    # Run demo queries
-    await run_demo_queries(agent)
-
-    # Ask if user wants interactive mode
-    print("\n" + "=" * 60)
     try:
-        response = input("Start interactive mode? (y/n): ").strip().lower()
-        if response in ("y", "yes"):
-            await run_interactive_demo(agent)
-    except (EOFError, KeyboardInterrupt):
-        pass
+        # Initialize knowledge base
+        await initialize_knowledge_base()
 
-    print("\nDone! Example complete.")
+        # Create the agent
+        print("\n3. Creating LangGraph agent...")
+        agent = create_agent_graph()
+        print("   Done: Agent created with HybridRAG tools")
+
+        # Run demo queries
+        await run_demo_queries(agent)
+
+        # Ask if user wants interactive mode
+        print("\n" + "=" * 60)
+        try:
+            response = input("Start interactive mode? (y/n): ").strip().lower()
+            if response in ("y", "yes"):
+                await run_interactive_demo(agent)
+        except (EOFError, KeyboardInterrupt):
+            pass
+
+        print("\nDone! Example complete.")
+    finally:
+        close_shared_client()
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ Uses pydantic-settings for type-safe configuration from environment variables.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,13 +25,26 @@ class Settings(BaseSettings):
         ...,
         description="MongoDB Atlas connection URI",
     )
+
+    # [M2] Validate URI starts with mongodb:// or mongodb+srv://
+    @field_validator("mongodb_uri")
+    @classmethod
+    def validate_mongodb_uri(cls, v: SecretStr) -> SecretStr:
+        """Ensure MongoDB URI has a valid scheme."""
+        uri = v.get_secret_value()
+        if not (uri.startswith("mongodb://") or uri.startswith("mongodb+srv://")):
+            raise ValueError("MongoDB URI must start with mongodb:// or mongodb+srv://")
+        return v
+
     mongodb_database: str = Field(
         default="hybridrag",
         description="MongoDB database name",
     )
     mongodb_workspace: str = Field(
         default="default",
-        description="Workspace prefix for collections",
+        description="Workspace prefix for MongoDB collection names in the engine layer. "
+        "Used by engine/kg/mongo_impl.py to namespace collections (e.g., 'myworkspace_kg_edges'). "
+        "Set to empty string for no prefix.",
     )
 
     # MongoDB Connection Pool [Rule: consistency-read-concern-levels]
@@ -52,16 +65,48 @@ class Settings(BaseSettings):
         description="Maximum idle time for connections in ms",
     )
 
+    # MongoDB TLS [M4] - Expose TLS settings for secure connections
+    mongodb_tls: bool = Field(
+        default=False,
+        description="Enable TLS for MongoDB connection. "
+        "Atlas connections (mongodb+srv://) use TLS by default via URI.",
+    )
+    mongodb_tls_allow_invalid_certificates: bool = Field(
+        default=False,
+        description="Allow invalid TLS certificates (dev only). "
+        "NEVER enable in production.",
+    )
+
+    # MongoDB Timeouts [Rule: mongodb-connection] - Fail fast on connection issues
+    mongodb_server_selection_timeout_ms: int = Field(
+        default=5000,
+        ge=1000,
+        description="Quick failover for replica set topology changes (5s default per skill)",
+    )
+    mongodb_connect_timeout_ms: int = Field(
+        default=10000,
+        ge=1000,
+        description="Fail fast on connection issues (10s default per skill)",
+    )
+    mongodb_socket_timeout_ms: int = Field(
+        default=0,
+        ge=0,
+        description="Socket timeout in ms. 0=no timeout for long-running operations. "
+        "Set 30000 for OLTP workloads to prevent hanging queries.",
+    )
+
     # MongoDB Read/Write Concerns [Rule: fundamental-commit-write-concern]
+    # [M1] Defaults changed to "majority" for production durability.
+    # RAG knowledge base: data loss = costly re-ingestion. Durability > latency.
     mongodb_read_concern: Literal["local", "majority", "snapshot"] = Field(
-        default="local",
-        description="Read concern level. 'local' matches current behavior. "
-        "'majority' recommended for production consistency.",
+        default="majority",
+        description="Read concern level. 'majority' for production durability. "
+        "'local' for lower latency with eventual consistency.",
     )
     mongodb_write_concern: Literal["0", "1", "majority"] = Field(
-        default="1",
-        description="Write concern level. '1' matches current default behavior. "
-        "'majority' recommended for production durability.",
+        default="majority",
+        description="Write concern level. 'majority' for production durability. "
+        "'1' for lower latency with less durability guarantee.",
     )
 
     # Query Validation
@@ -269,6 +314,19 @@ class Settings(BaseSettings):
 
 
 @lru_cache
+def _get_settings_cached() -> Settings:
+    """Internal cached settings factory."""
+    return Settings()
+
+
 def get_settings() -> Settings:
     """Get cached settings instance."""
-    return Settings()
+    return _get_settings_cached()
+
+
+def clear_settings_cache() -> None:
+    """Clear the settings cache. Used in tests for isolation.
+
+    [M3] Allows tests to reset cached settings between test cases.
+    """
+    _get_settings_cached.cache_clear()

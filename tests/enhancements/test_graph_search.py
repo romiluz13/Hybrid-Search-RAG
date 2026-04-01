@@ -163,47 +163,45 @@ class TestBuildGraphLookupPipeline:
         assert graph_lookup["maxDepth"] == 2
 
     def test_entity_normalization_in_pipeline(self) -> None:
-        """Entity name should use case-insensitive regex in match stage."""
-        import re
-
+        """Entity name should use lowercased equality in match stage (no regex)."""
         config = GraphTraversalConfig()
         pipeline = build_graph_lookup_pipeline("  MongoDB  ", config)
 
-        # First stage match should have $or with regex for case-insensitive matching
+        # First stage match should have $or with direct equality on lowercased name
         match_stage = pipeline[0]["$match"]
         # Match uses $or for source or target
         assert "$or" in match_stage
-        # Check regex pattern in first condition (case-insensitive)
+        # Check equality match on lowercased, stripped entity name
         conditions = match_stage["$or"]
         source_condition = conditions[0]["source_node_id"]
-        assert "$regex" in source_condition
-        # The regex should be case-insensitive and match "MongoDB" (stripped)
-        regex_pattern = source_condition["$regex"]
-        assert isinstance(regex_pattern, re.Pattern)
-        assert regex_pattern.flags & re.IGNORECASE
+        target_condition = conditions[1]["target_node_id"]
+        # Should be plain string (lowercased), not regex pattern
+        assert isinstance(source_condition, str)
+        assert source_condition == "mongodb"
+        assert isinstance(target_condition, str)
+        assert target_condition == "mongodb"
 
 
 class TestGraphSearchIntegration:
     """Integration tests (require MongoDB connection).
 
-    These tests are skipped by default as they require a live MongoDB connection.
-    To run them, set MONGODB_URI environment variable and remove the skip decorators.
+    L22: Removed empty stub bodies with pass/pytest.skip() calls.
+    L26: Removed redundant pytest.skip() inside @pytest.mark.skip decorated tests.
+    TODO: Implement when MongoDB integration test infrastructure is available.
+    Tracked stubs:
+    - test_graph_traversal_execution: Full traversal with real graph data
+    - test_expand_entities_via_graph: Entity expansion via graph edges
+    - test_get_chunks_for_entities: Chunk retrieval for discovered entities
     """
 
-    @pytest.mark.skip(reason="Requires MongoDB connection - set MONGODB_URI to run")
+    @pytest.mark.skip(reason="Requires MongoDB connection - TODO: implement")
     async def test_graph_traversal_execution(self) -> None:
         """Test actual graph traversal execution with MongoDB."""
-        # Integration test placeholder - implement with MongoDB connection
-        pytest.skip("Not implemented - requires MongoDB test infrastructure")
 
-    @pytest.mark.skip(reason="Requires MongoDB connection - set MONGODB_URI to run")
+    @pytest.mark.skip(reason="Requires MongoDB connection - TODO: implement")
     async def test_expand_entities_via_graph(self) -> None:
         """Test entity expansion via graph traversal."""
-        # Integration test placeholder - implement with MongoDB connection
-        pytest.skip("Not implemented - requires MongoDB test infrastructure")
 
-    @pytest.mark.skip(reason="Requires MongoDB connection - set MONGODB_URI to run")
+    @pytest.mark.skip(reason="Requires MongoDB connection - TODO: implement")
     async def test_get_chunks_for_entities(self) -> None:
         """Test chunk retrieval for entities from graph."""
-        # Integration test placeholder - implement with MongoDB connection
-        pytest.skip("Not implemented - requires MongoDB test infrastructure")

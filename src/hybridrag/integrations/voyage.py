@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import voyageai
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -44,6 +45,24 @@ class VoyageEmbedder:
         self._sync_client = voyageai.Client(api_key=self.api_key)
         self._async_client = voyageai.AsyncClient(api_key=self.api_key)
 
+    @retry(
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    async def _embed_batch(
+        self,
+        batch: list[str],
+        input_type: str,
+    ) -> list[list[float]]:
+        """Embed a single batch with retry for rate limit errors."""
+        result = await self._async_client.embed(
+            batch,
+            model=self.embedding_model,
+            input_type=input_type,
+        )
+        return result.embeddings
+
     async def embed_async(
         self,
         texts: Sequence[str],
@@ -67,7 +86,7 @@ class VoyageEmbedder:
             logger.warning(
                 "[EMBEDDING] Empty texts list provided, returning empty array"
             )
-            return np.array([], dtype=np.float32)
+            return np.empty((0, 1024), dtype=np.float32)
 
         all_embeddings: list[list[float]] = []
         total_batches = (len(texts) + self.batch_size - 1) // self.batch_size
@@ -79,14 +98,10 @@ class VoyageEmbedder:
                 f"[EMBEDDING] Processing batch {batch_num}/{total_batches} ({len(batch)} texts)"
             )
 
-            result = await self._async_client.embed(
-                batch,
-                model=self.embedding_model,
-                input_type=input_type,
-            )
-            all_embeddings.extend(result.embeddings)
+            batch_embeddings = await self._embed_batch(batch, input_type)
+            all_embeddings.extend(batch_embeddings)
             logger.debug(
-                f"[EMBEDDING] Batch {batch_num} complete, got {len(result.embeddings)} embeddings"
+                f"[EMBEDDING] Batch {batch_num} complete, got {len(batch_embeddings)} embeddings"
             )
 
         embeddings_array = np.array(all_embeddings, dtype=np.float32)
@@ -111,7 +126,7 @@ class VoyageEmbedder:
             Numpy array of embeddings (n, 1024)
         """
         if not texts:
-            return np.array([], dtype=np.float32)
+            return np.empty((0, 1024), dtype=np.float32)
 
         all_embeddings: list[list[float]] = []
 
@@ -166,7 +181,7 @@ class VoyageEmbedder:
             Flattened numpy array of embeddings for all chunks
         """
         if not chunks_by_document or all(len(doc) == 0 for doc in chunks_by_document):
-            return np.array([], dtype=np.float32)
+            return np.empty((0, 1024), dtype=np.float32)
 
         result = await self._async_client.contextualized_embed(
             list(chunks_by_document),

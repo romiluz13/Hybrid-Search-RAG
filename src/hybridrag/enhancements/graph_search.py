@@ -129,9 +129,8 @@ def build_graph_lookup_pipeline(
     Returns:
         MongoDB aggregation pipeline stages
     """
-    # Use case-insensitive regex for matching (handles varied casing in data)
-    escaped_entity = escape_regex(entity_name.strip())
-    entity_regex = re.compile(f"^{escaped_entity}$", re.IGNORECASE)
+    # Use lowercased entity name for direct equality match (no $regex -- avoids COLLSCAN)
+    entity_name_lower = normalize_entity_name(entity_name)
 
     # Get collection name with workspace prefix
     edges_collection = (
@@ -140,39 +139,50 @@ def build_graph_lookup_pipeline(
         else config.edges_collection
     )
 
+    # Cap maxDepth at 5 to prevent traversal explosion (H14)
+    capped_max_depth = min(config.max_depth - 1, 5)
+
+    # Build restrictSearchWithMatch for $graphLookup (H14)
+    restrict_match: dict[str, Any] = {}
+    if config.min_weight:
+        restrict_match[config.weight_field] = {"$gte": config.min_weight}
+
     pipeline: list[dict[str, Any]] = [
-        # Stage 1: Find edges where this entity is source or target (case-insensitive)
+        # Stage 1: Find edges where this entity is source or target
+        # Uses direct equality on lowercased name (index-friendly, no COLLSCAN)
         {
             "$match": {
                 "$or": [
-                    {config.source_field: {"$regex": entity_regex}},
-                    {config.target_field: {"$regex": entity_regex}},
+                    {config.source_field: entity_name_lower},
+                    {config.target_field: entity_name_lower},
                 ],
             },
         },
-        # Stage 2: Outbound traversal from matched edges
+        # Stage 2: Limit seed set to prevent unbounded fan-out (H14)
+        {"$limit": 100},
+        # Stage 3: Outbound traversal from matched edges
         {
             "$graphLookup": {
                 "from": edges_collection,
                 "startWith": f"${config.target_field}",
                 "connectFromField": config.target_field,
                 "connectToField": config.source_field,
-                "maxDepth": config.max_depth
-                - 1,  # -1 because we already matched first hop
+                "maxDepth": capped_max_depth,
                 "depthField": "depth",
                 "as": "connected_edges",
+                "restrictSearchWithMatch": restrict_match,
             },
         },
-        # Stage 3: Unwind connected edges (preserve original if empty)
+        # Stage 4: Unwind connected edges (preserve original if empty)
         {"$unwind": {"path": "$connected_edges", "preserveNullAndEmptyArrays": True}},
-        # Stage 4: Sort by depth and weight
+        # Stage 5: Sort by depth and weight
         {
             "$sort": {
                 "connected_edges.depth": 1,
                 f"connected_edges.{config.weight_field}": -1,
             }
         },
-        # Stage 5: Limit results
+        # Stage 6: Limit results
         {"$limit": config.max_nodes * 2},  # Over-fetch for deduplication
     ]
 
@@ -220,7 +230,7 @@ async def graph_traversal(
     pipeline = build_graph_lookup_pipeline(entity_name, config)
 
     try:
-        cursor = collection.aggregate(
+        cursor = await collection.aggregate(
             pipeline, allowDiskUse=True, maxTimeMS=_GRAPH_AGGREGATE_TIMEOUT_MS
         )
         results = await cursor.to_list(length=None)
@@ -289,8 +299,8 @@ async def graph_traversal(
         # Sort edges by depth ascending, weight descending
         edges.sort(key=lambda e: (e.depth, -e.weight))
 
-        # Limit to max_nodes
-        related_entities = list(entity_set)[: config.max_nodes]
+        # Limit to max_nodes (L7: sort for deterministic ordering)
+        related_entities = sorted(entity_set)[: config.max_nodes]
 
         logger.info(
             f"[GRAPH_SEARCH] Traversed from '{entity_name}': "
@@ -359,15 +369,30 @@ async def get_chunks_for_entities(
 
     collection: AsyncCollection = db[chunks_collection_name]
 
-    # Normalize entity names for matching
+    # Normalize entity names for matching (pre-lowercased for equality)
     normalized_names = [normalize_entity_name(name) for name in entity_names]
 
-    # Build match stage with case-insensitive regex
+    # M21: Use pre-lowercased string equality with $toLower instead of regex $in
+    # Per query-optimizer skill: "NEVER use $regex for search"
+    # Regex in $in array is O(n*m) -- use $expr with $toLower for index-friendly matching
     match_stage: dict[str, Any] = {
-        "entities.name": {
-            "$in": [
-                re.compile(f"^{escape_regex(name)}$", re.IGNORECASE)
-                for name in normalized_names
+        "$expr": {
+            "$gt": [
+                {
+                    "$size": {
+                        "$filter": {
+                            "input": {"$ifNull": ["$entities", []]},
+                            "as": "entity",
+                            "cond": {
+                                "$in": [
+                                    {"$toLower": "$$entity.name"},
+                                    normalized_names,
+                                ],
+                            },
+                        },
+                    },
+                },
+                0,
             ],
         },
     }
@@ -403,7 +428,7 @@ async def get_chunks_for_entities(
     ]
 
     try:
-        cursor = collection.aggregate(
+        cursor = await collection.aggregate(
             pipeline, allowDiskUse=True, maxTimeMS=_GRAPH_AGGREGATE_TIMEOUT_MS
         )
         results = await cursor.to_list(length=None)

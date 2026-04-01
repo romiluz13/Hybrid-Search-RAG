@@ -10,6 +10,7 @@ Production-ready API with:
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from ..core.mongodb_client import close_shared_client
 from ..core.rag import HybridRAG, create_hybridrag
 from .models import (
     ErrorResponse,
@@ -29,6 +31,8 @@ from .models import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
+
+logger = logging.getLogger("hybridrag.api")
 
 __version__ = "0.2.0"
 
@@ -58,6 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown: Cleanup
     _rag = None
+    close_shared_client()
 
 
 def create_app() -> FastAPI:
@@ -71,8 +76,12 @@ def create_app() -> FastAPI:
 
     # CORS middleware - configure allowed origins from environment
     # Default to localhost for development; set CORS_ORIGINS in production
-    cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000")
-    allowed_origins = [origin.strip() for origin in cors_origins.split(",") if origin.strip()]
+    cors_origins = os.environ.get(
+        "CORS_ORIGINS", "http://localhost:3000,http://localhost:8000"
+    )
+    allowed_origins = [
+        origin.strip() for origin in cors_origins.split(",") if origin.strip()
+    ]
 
     app.add_middleware(
         CORSMiddleware,
@@ -109,7 +118,11 @@ def register_routes(app: FastAPI) -> None:
             components["rag"] = "unhealthy"
             components["mongodb"] = "unknown"
 
-        overall = "healthy" if all(v == "healthy" for v in components.values()) else "degraded"
+        overall = (
+            "healthy"
+            if all(v == "healthy" for v in components.values())
+            else "degraded"
+        )
 
         return HealthResponse(
             status=overall,
@@ -167,10 +180,12 @@ def register_routes(app: FastAPI) -> None:
                 message=f"Successfully ingested {len(request.documents)} documents",
             )
         except Exception as e:
+            # M34: Do not leak internal exception details to API callers
+            logger.error(f"Ingestion error: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail=str(e),
-            )
+                detail="Internal server error during ingestion",
+            ) from None
 
     @app.post(
         "/v1/query",
@@ -229,14 +244,17 @@ def register_routes(app: FastAPI) -> None:
                     },
                 )
         except Exception as e:
+            # M34: Do not leak internal exception details to API callers
+            logger.error(f"Query error: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail=str(e),
-            )
+                detail="Internal server error during query",
+            ) from None
 
     @app.delete(
         "/v1/documents/{doc_id}",
         responses={
+            400: {"model": ErrorResponse},
             404: {"model": ErrorResponse},
             500: {"model": ErrorResponse},
         },
@@ -244,16 +262,29 @@ def register_routes(app: FastAPI) -> None:
     )
     async def delete_document(doc_id: str) -> dict:
         """Delete a document from the RAG system."""
+        # M33: Validate doc_id as ObjectId format
+        from bson import ObjectId
+        from bson.errors import InvalidId
+
+        try:
+            ObjectId(doc_id)
+        except (InvalidId, Exception):
+            raise HTTPException(
+                status_code=400, detail="Invalid document ID format"
+            ) from None
+
         rag = get_rag()
 
         try:
             await rag.delete_document(doc_id)
             return {"status": "deleted", "doc_id": doc_id}
         except Exception as e:
+            # M34: Do not leak internal exception details to API callers
+            logger.error(f"Delete error for doc_id={doc_id}: {e}", exc_info=True)
             raise HTTPException(
                 status_code=500,
-                detail=str(e),
-            )
+                detail="Internal server error during document deletion",
+            ) from None
 
     @app.get("/v1/status", tags=["system"])
     async def get_status() -> dict:

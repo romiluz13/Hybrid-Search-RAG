@@ -275,20 +275,25 @@ async def example_clear_session():
 
 async def main():
     """Run all examples."""
+    from hybridrag.core.mongodb_client import close_shared_client
+
     print("\n" + "=" * 60)
     print("HybridRAG Example 06: Conversation Memory")
     print("=" * 60)
 
-    # Run examples
-    await example_basic_conversation()
-    await example_session_management()
-    await example_history_retrieval()
-    await example_memory_summarization()
-    await example_clear_session()
+    try:
+        # Run examples
+        await example_basic_conversation()
+        await example_session_management()
+        await example_history_retrieval()
+        await example_memory_summarization()
+        await example_clear_session()
 
-    print("\n" + "=" * 60)
-    print("All examples complete!")
-    print("=" * 60)
+        print("\n" + "=" * 60)
+        print("All examples complete!")
+        print("=" * 60)
+    finally:
+        close_shared_client()
 
 
 if __name__ == "__main__":

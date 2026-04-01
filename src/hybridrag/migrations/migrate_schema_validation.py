@@ -68,7 +68,8 @@ VALIDATORS = {
                     "description": "When summary was last updated",
                 },
             },
-            "additionalProperties": False,
+            # M38: additionalProperties removed to allow flexible metadata
+            # [Rule: mongodb-schema-design] Allow extensibility for future fields
         }
     },
     # Conversation messages - separate collection (Rule 1.1 fix)

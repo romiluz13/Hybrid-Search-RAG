@@ -150,7 +150,10 @@ async def conversation_loop(rag: HybridRAG) -> None:
     """
     import uuid
 
-    # Create a new session for this conversation
+    # Create a new session for this conversation.
+    # L30: The session UUID is generated here and persisted to MongoDB lazily
+    # on the first call to rag.query_with_memory(), which calls
+    # ConversationMemory.create_session() if the session doesn't exist yet.
     session_id = str(uuid.uuid4())
 
     if RICH_AVAILABLE:

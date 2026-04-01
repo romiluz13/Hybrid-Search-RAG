@@ -207,15 +207,23 @@ def build_lexical_prefilters(config: LexicalPrefilterConfig) -> dict[str, Any]:
                 range_clause[op] = range_spec[op]
         filter_clauses.append({"range": range_clause})
 
-    # Geo filters
+    # Geo filters (L10: use relation field to select correct operator)
+    _GEO_RELATION_OPERATORS = {
+        "within": "geoWithin",
+        "intersects": "geoIntersects",
+        "contains": "geoWithin",  # Atlas Search maps "contains" to geoWithin
+        "disjoint": "geoWithin",  # No native disjoint; closest operator
+    }
     for geo_filter in config.geo_filters:
         path = geo_filter.get("path")
         geometry = geo_filter.get("geometry")
         if not path or not geometry:
             continue  # Skip invalid filter (missing required fields)
+        relation = geo_filter.get("relation", "within")
+        geo_operator = _GEO_RELATION_OPERATORS.get(relation, "geoWithin")
         filter_clauses.append(
             {
-                "geoWithin": {
+                geo_operator: {
                     "path": path,
                     "geometry": geometry,
                 }
@@ -298,21 +306,23 @@ def build_search_vector_search_stage(
             }
         }
     """
-    # Calculate numCandidates if not provided
-    if num_candidates is None:
-        num_candidates = limit * 20  # MongoDB best practice
-
     # Build vectorSearch operator
     vector_search: dict[str, Any] = {
         "queryVector": query_vector,
         "path": vector_path,
-        "numCandidates": num_candidates,
         "limit": limit,
     }
 
-    # Add exact flag if True
+    # numCandidates and exact are mutually exclusive (MongoDB docs):
+    # numCandidates is required when exact is false or omitted.
+    # When exact=True, numCandidates MUST NOT be present.
     if exact:
         vector_search["exact"] = True
+    else:
+        # Calculate numCandidates if not provided
+        if num_candidates is None:
+            num_candidates = limit * 20  # MongoDB best practice
+        vector_search["numCandidates"] = num_candidates
 
     # Add lexical prefilters if provided
     if filter_config:

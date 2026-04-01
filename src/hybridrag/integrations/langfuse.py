@@ -34,9 +34,12 @@ from typing import Any, TypeVar
 
 logger = logging.getLogger("hybridrag.langfuse")
 
-# Check if Langfuse is available and configured
+# M41: Langfuse availability check at import (no env reads).
+# Environment variable reads are deferred to _check_langfuse_enabled()
+# which is called on first use, not at import time.
+# [Rule: mongodb-mcp-setup] Avoid import-time side effects.
 LANGFUSE_AVAILABLE = False
-LANGFUSE_ENABLED = False
+_langfuse_enabled: bool | None = None  # None = not yet checked
 _langfuse_client = None
 
 try:
@@ -45,16 +48,6 @@ try:
 
     LANGFUSE_AVAILABLE = True
 
-    # Check if environment variables are configured
-    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
-    secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
-
-    if public_key and secret_key:
-        LANGFUSE_ENABLED = True
-        logger.info("[LANGFUSE] Observability enabled")
-    else:
-        logger.debug("[LANGFUSE] Keys not configured, tracing disabled")
-
 except ImportError:
     logger.debug("[LANGFUSE] Package not installed, tracing disabled")
     Langfuse = None
@@ -62,11 +55,38 @@ except ImportError:
     observe = None
 
 
+def _check_langfuse_enabled() -> bool:
+    """Check if Langfuse is enabled (lazy -- reads env on first call only).
+
+    M41: This defers LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY reads
+    to first use rather than import time.
+    """
+    global _langfuse_enabled
+    if _langfuse_enabled is None:
+        if not LANGFUSE_AVAILABLE:
+            _langfuse_enabled = False
+        else:
+            public_key = os.environ.get("LANGFUSE_PUBLIC_KEY")
+            secret_key = os.environ.get("LANGFUSE_SECRET_KEY")
+            _langfuse_enabled = bool(public_key and secret_key)
+            if _langfuse_enabled:
+                logger.info("[LANGFUSE] Observability enabled")
+            else:
+                logger.debug("[LANGFUSE] Keys not configured, tracing disabled")
+    return _langfuse_enabled
+
+
+# Backward-compatible module-level name. External callers that do
+# `from hybridrag.integrations.langfuse import LANGFUSE_ENABLED`
+# will get False. Internal code uses _check_langfuse_enabled().
+LANGFUSE_ENABLED = False
+
+
 def get_langfuse() -> Langfuse | None:
     """Get or create the Langfuse client singleton."""
     global _langfuse_client
 
-    if not LANGFUSE_ENABLED:
+    if not _check_langfuse_enabled():
         return None
 
     if _langfuse_client is None:
@@ -119,7 +139,7 @@ def trace_rag_query(
     """
 
     def decorator(func: F) -> F:
-        if not LANGFUSE_ENABLED:
+        if not _check_langfuse_enabled():
             return func
 
         @wraps(func)
@@ -239,7 +259,7 @@ def trace_span(
         with trace_span("embedding", input_data={"texts": texts}):
             embeddings = await embed(texts)
     """
-    if not LANGFUSE_ENABLED:
+    if not _check_langfuse_enabled():
         yield None
         return
 
@@ -297,7 +317,7 @@ def create_traced_llm_func(
         traced_llm = create_traced_llm_func(gemini_llm_func, "gemini-2.5-flash")
         response = await traced_llm(prompt)
     """
-    if not LANGFUSE_ENABLED:
+    if not _check_langfuse_enabled():
         return llm_func
 
     @wraps(llm_func)
@@ -323,7 +343,10 @@ def create_traced_llm_func(
             duration = time.time() - start_time
 
             generation.update(
-                output={"response_preview": str(result)[:500], "response_length": len(str(result))},
+                output={
+                    "response_preview": str(result)[:500],
+                    "response_length": len(str(result)),
+                },
                 metadata={
                     "duration_seconds": round(duration, 3),
                     "status": "success",
@@ -387,7 +410,7 @@ def create_traced_llm_func(
 
 def create_traced_embedding_func(
     embed_func: Callable[..., Any],
-    model_name: str = "voyage-3-large",
+    model_name: str = "voyage-4-large",
 ) -> Callable[..., Any]:
     """
     Wrap an embedding function with Langfuse tracing.
@@ -399,7 +422,7 @@ def create_traced_embedding_func(
     Returns:
         Wrapped function with tracing
     """
-    if not LANGFUSE_ENABLED:
+    if not _check_langfuse_enabled():
         return embed_func
 
     @wraps(embed_func)
@@ -429,7 +452,9 @@ def create_traced_embedding_func(
                 metadata={
                     "duration_seconds": round(duration, 3),
                     "status": "success",
-                    "texts_per_second": round(len(texts) / duration, 2) if duration > 0 else 0,
+                    "texts_per_second": round(len(texts) / duration, 2)
+                    if duration > 0
+                    else 0,
                 },
             )
 
@@ -475,7 +500,7 @@ def log_rag_query(
             duration_seconds=2.5,
         )
     """
-    if not LANGFUSE_ENABLED:
+    if not _check_langfuse_enabled():
         return
 
     langfuse = get_langfuse()
@@ -516,7 +541,7 @@ def log_ingestion(
         duration_seconds: Ingestion duration
         metadata: Additional metadata
     """
-    if not LANGFUSE_ENABLED:
+    if not _check_langfuse_enabled():
         return
 
     langfuse = get_langfuse()
@@ -542,14 +567,14 @@ def log_ingestion(
 # Export status for easy checking
 def is_enabled() -> bool:
     """Check if Langfuse tracing is enabled."""
-    return LANGFUSE_ENABLED
+    return _check_langfuse_enabled()
 
 
 def get_status() -> dict[str, Any]:
     """Get Langfuse integration status."""
     return {
         "available": LANGFUSE_AVAILABLE,
-        "enabled": LANGFUSE_ENABLED,
+        "enabled": _check_langfuse_enabled(),
         "host": os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
         "public_key_set": bool(os.environ.get("LANGFUSE_PUBLIC_KEY")),
         "secret_key_set": bool(os.environ.get("LANGFUSE_SECRET_KEY")),

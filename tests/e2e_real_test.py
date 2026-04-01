@@ -23,8 +23,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Override workspace to empty string to use non-prefixed collections
-# The hybridrag_production_test database has data in non-prefixed collections
 os.environ["MONGODB_WORKSPACE"] = ""
+
+# Database name - configurable via env var, defaults to 'hybridrag'
+TEST_DB_NAME = os.environ.get("HYBRIDRAG_TEST_DB", "hybridrag_e2e_test")
 
 # Test results storage
 RESULTS: dict[str, Any] = {
@@ -54,20 +56,19 @@ def log_test(name: str, passed: bool, details: str, duration: float = 0) -> None
 async def test_mongodb_connection() -> bool:
     """Test 1: MongoDB Connection"""
     start = time.time()
+    client = None
     try:
-        from motor.motor_asyncio import AsyncIOMotorClient
+        from pymongo import AsyncMongoClient
 
         uri = os.environ.get("MONGODB_URI")
-        client = AsyncIOMotorClient(uri)
+        client = AsyncMongoClient(uri)
 
         # Ping the database
         await client.admin.command("ping")
 
         # Check our test database
-        db = client["hybridrag_production_test"]
+        db = client[TEST_DB_NAME]
         collections = await db.list_collection_names()
-
-        client.close()
 
         log_test(
             "MongoDB Connection",
@@ -79,6 +80,9 @@ async def test_mongodb_connection() -> bool:
     except Exception as e:
         log_test("MongoDB Connection", False, str(e), time.time() - start)
         return False
+    finally:
+        if client is not None:
+            client.close()
 
 
 async def test_voyage_embeddings() -> Any:
@@ -112,19 +116,20 @@ async def test_voyage_embeddings() -> Any:
 async def test_vector_search_direct(embedding: Any) -> bool:
     """Test 3: Direct MongoDB Vector Search (using 'vector' field)"""
     start = time.time()
+    client = None
     try:
-        from motor.motor_asyncio import AsyncIOMotorClient
+        from pymongo import AsyncMongoClient
 
         uri = os.environ.get("MONGODB_URI")
-        client = AsyncIOMotorClient(uri)
-        db = client["hybridrag_production_test"]
+        client = AsyncMongoClient(uri)
+        db = client[TEST_DB_NAME]
 
         # Check if vector index exists - use the correct field name 'vector'
         # First try with the index, if it fails, we'll note it
         pipeline = [
             {
                 "$vectorSearch": {
-                    "index": "vector_index",
+                    "index": "vector_knn_index",
                     "path": "vector",  # Correct field name
                     "queryVector": embedding,
                     "numCandidates": 100,
@@ -176,22 +181,25 @@ async def test_vector_search_direct(embedding: Any) -> bool:
             else:
                 raise
 
-        client.close()
         return True
     except Exception as e:
         log_test("Direct Vector Search", False, str(e), time.time() - start)
         return False
+    finally:
+        if client is not None:
+            client.close()
 
 
 async def test_knowledge_graph() -> tuple[list[Any], list[Any]]:
     """Test 4: Knowledge Graph Queries"""
     start = time.time()
+    client = None
     try:
-        from motor.motor_asyncio import AsyncIOMotorClient
+        from pymongo import AsyncMongoClient
 
         uri = os.environ.get("MONGODB_URI")
-        client = AsyncIOMotorClient(uri)
-        db = client["hybridrag_production_test"]
+        client = AsyncMongoClient(uri)
+        db = client[TEST_DB_NAME]
 
         # Get entities
         entities = await db.entities.find({}).limit(10).to_list(length=10)
@@ -202,8 +210,6 @@ async def test_knowledge_graph() -> tuple[list[Any], list[Any]]:
         # Count totals
         entity_count = await db.entities.count_documents({})
         rel_count = await db.relationships.count_documents({})
-
-        client.close()
 
         has_entities = len(entities) > 0
         has_relationships = len(relationships) > 0
@@ -218,6 +224,9 @@ async def test_knowledge_graph() -> tuple[list[Any], list[Any]]:
     except Exception as e:
         log_test("Knowledge Graph Data", False, str(e), time.time() - start)
         return [], []
+    finally:
+        if client is not None:
+            client.close()
 
 
 async def test_hybridrag_initialization() -> Any:
@@ -229,7 +238,7 @@ async def test_hybridrag_initialization() -> Any:
         from hybridrag.core.rag import HybridRAG
 
         settings = Settings(
-            mongodb_database="hybridrag_production_test",
+            mongodb_database=TEST_DB_NAME,
             mongodb_workspace="",  # Use non-prefixed collections
         )
 
@@ -257,7 +266,7 @@ async def test_vector_search_mode(rag: Any) -> bool:
     try:
         # Run vector search query - local mode is vector-focused
         response = await rag.query(
-            query="Who are Oscar and Hadassah?",
+            query="How does vector search work in MongoDB?",
             mode="local",
             top_k=5,
             only_context=True,  # Just get context, don't use LLM
@@ -283,7 +292,7 @@ async def test_graph_search_mode(rag: Any) -> bool:
     try:
         # Run graph search query - global mode uses graph structure
         response = await rag.query(
-            query="What relationships exist between family members?",
+            query="What are the main components of HybridRAG architecture?",
             mode="global",
             top_k=5,
             only_context=True,
@@ -309,7 +318,7 @@ async def test_mix_search_mode(rag: Any) -> bool:
     try:
         # Run mix search query - combines vector + graph
         response = await rag.query(
-            query="Tell me about the book and its authors",
+            query="How do you combine vector search with knowledge graphs?",
             mode="mix",
             top_k=5,
             only_context=True,
@@ -337,7 +346,7 @@ async def test_conversation_memory() -> bool:
 
         memory = ConversationMemory(
             mongodb_uri=os.environ.get("MONGODB_URI"),
-            database="hybridrag_production_test",
+            database=TEST_DB_NAME,
         )
         await memory.initialize()
 
@@ -382,7 +391,7 @@ async def test_full_rag_query(rag: Any) -> bool:
     try:
         # Run full query with LLM
         response = await rag.query(
-            query="Who wrote this book and why did they write it?",
+            query="What is the best strategy for production deployment of a RAG system?",
             mode="mix",
             top_k=5,
         )
@@ -419,7 +428,7 @@ async def test_query_with_sources(rag: Any) -> bool:
     try:
         # Run query with sources
         result = await rag.query_with_sources(
-            query="What happened during the Holocaust mentioned in this book?",
+            query="How do you optimize numCandidates for vector search performance?",
             mode="mix",
             top_k=5,
         )
@@ -494,7 +503,7 @@ async def run_all_tests() -> None:
     print("🧪 HYBRIDRAG E2E TEST SUITE - REAL API CALLS")
     print("=" * 70)
     print(f"Started: {datetime.now(UTC).isoformat()}")
-    print("Database: hybridrag_production_test")
+    print(f"Database: {TEST_DB_NAME}")
     print("=" * 70 + "\n")
 
     RESULTS["start_time"] = time.time()
