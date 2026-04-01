@@ -61,8 +61,14 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 # Suppress RAGAS deprecation warnings
-warnings.filterwarnings("ignore", message=".*LangchainLLMWrapper is deprecated.*", category=DeprecationWarning)
-warnings.filterwarnings("ignore", message=".*Unexpected type for token usage.*", category=UserWarning)
+warnings.filterwarnings(
+    "ignore",
+    message=".*LangchainLLMWrapper is deprecated.*",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore", message=".*Unexpected type for token usage.*", category=UserWarning
+)
 
 # Check RAGAS availability
 RAGAS_AVAILABLE = False
@@ -77,11 +83,12 @@ try:
         ContextRecall,
         Faithfulness,
     )
-    from tqdm.auto import tqdm
 
     RAGAS_AVAILABLE = True
 except ImportError as e:
-    logger.warning(f"RAGAS not available: {e}. Install with: pip install ragas datasets langchain-openai")
+    logger.warning(
+        f"RAGAS not available: {e}. Install with: pip install ragas datasets langchain-openai"
+    )
     Dataset = None
     evaluate = None
 
@@ -130,7 +137,9 @@ class RAGEvaluator:
             )
 
         # Configure evaluation LLM (for RAGAS scoring - needs OpenAI-compatible)
-        eval_api_key = os.getenv("EVAL_LLM_BINDING_API_KEY") or os.getenv("OPENAI_API_KEY")
+        eval_api_key = os.getenv("EVAL_LLM_BINDING_API_KEY") or os.getenv(
+            "OPENAI_API_KEY"
+        )
         if not eval_api_key:
             raise OSError(
                 "EVAL_LLM_BINDING_API_KEY or OPENAI_API_KEY required for RAGAS evaluation. "
@@ -139,7 +148,9 @@ class RAGEvaluator:
 
         eval_model = os.getenv("EVAL_LLM_MODEL", "gpt-4o-mini")
         eval_llm_base_url = os.getenv("EVAL_LLM_BINDING_HOST")
-        eval_embedding_model = os.getenv("EVAL_EMBEDDING_MODEL", "text-embedding-3-small")
+        eval_embedding_model = os.getenv(
+            "EVAL_EMBEDDING_MODEL", "text-embedding-3-small"
+        )
 
         # Create LLM for RAGAS
         llm_kwargs = {
@@ -153,7 +164,9 @@ class RAGEvaluator:
 
         base_llm = ChatOpenAI(**llm_kwargs)
         self.eval_llm = LangchainLLMWrapper(langchain_llm=base_llm, bypass_n=True)
-        self.eval_embeddings = OpenAIEmbeddings(model=eval_embedding_model, api_key=eval_api_key)
+        self.eval_embeddings = OpenAIEmbeddings(
+            model=eval_embedding_model, api_key=eval_api_key
+        )
 
         # Store RAG instance
         self.rag = rag_instance
@@ -341,7 +354,9 @@ class RAGEvaluator:
                 # Calculate RAGAS score (average of valid metrics)
                 metrics = result["metrics"]
                 valid = [v for v in metrics.values() if not _is_nan(v)]
-                result["ragas_score"] = round(sum(valid) / len(valid), 4) if valid else 0
+                result["ragas_score"] = (
+                    round(sum(valid) / len(valid), 4) if valid else 0
+                )
 
                 logger.info(f"[{idx}] RAGAS Score: {result['ragas_score']:.4f}")
 
@@ -376,7 +391,9 @@ class RAGEvaluator:
 
     def _export_csv(self, results: list[dict[str, Any]]) -> Path:
         """Export results to CSV."""
-        csv_path = self.results_dir / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        csv_path = (
+            self.results_dir / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        )
 
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             fieldnames = [
@@ -444,7 +461,9 @@ class RAGEvaluator:
                 )
             else:
                 error = result.get("error", "Unknown")[:20]
-                logger.info(f"{idx:<4} | {question:<45} | {'N/A':>6} | {'N/A':>6} | {'N/A':>6} | {'N/A':>6} | {'N/A':>6} | {error}")
+                logger.info(
+                    f"{idx:<4} | {question:<45} | {'N/A':>6} | {'N/A':>6} | {'N/A':>6} | {'N/A':>6} | {'N/A':>6} | {error}"
+                )
 
         logger.info("=" * 110)
 
@@ -474,7 +493,12 @@ class RAGEvaluator:
 
         for result in valid:
             m = result.get("metrics", {})
-            for key in ["faithfulness", "answer_relevance", "context_recall", "context_precision"]:
+            for key in [
+                "faithfulness",
+                "answer_relevance",
+                "context_recall",
+                "context_precision",
+            ]:
                 val = m.get(key, 0)
                 if not _is_nan(val):
                     metrics_sums[key] += val
@@ -490,7 +514,11 @@ class RAGEvaluator:
             count = metrics_counts[key]
             averages[key] = round(total_sum / count, 4) if count > 0 else 0.0
 
-        ragas_scores = [r.get("ragas_score", 0) for r in valid if not _is_nan(r.get("ragas_score", 0))]
+        ragas_scores = [
+            r.get("ragas_score", 0)
+            for r in valid
+            if not _is_nan(r.get("ragas_score", 0))
+        ]
 
         return {
             "total_tests": total,
@@ -524,7 +552,10 @@ class RAGEvaluator:
             "results": results,
         }
 
-        json_path = self.results_dir / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        json_path = (
+            self.results_dir
+            / f"results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
         with open(json_path, "w") as f:
             json.dump(summary, f, indent=2)
 

@@ -40,7 +40,14 @@ class SystemPromptConfig:
     max_response_tokens: int | None = None
     custom_instructions: str | None = None
     entity_types: list[str] = field(
-        default_factory=lambda: ["person", "organization", "location", "concept", "event", "product"]
+        default_factory=lambda: [
+            "person",
+            "organization",
+            "location",
+            "concept",
+            "event",
+            "product",
+        ]
     )
 
 
@@ -181,34 +188,53 @@ def create_system_prompt(
         ... )
     """
     if entity_types is None:
-        entity_types = ["person", "organization", "location", "concept", "event", "product"]
+        entity_types = [
+            "person",
+            "organization",
+            "location",
+            "concept",
+            "event",
+            "product",
+        ]
 
     entity_types_str = ", ".join(entity_types)
 
-    citation_section = """
+    citation_section = (
+        """
 ## Citation Requirements
 - Use inline citations [1], [2], etc. for specific claims
 - Cite source documents in References section
 - Format: [n] Document Title
 - Maximum 5 most relevant citations
-""" if include_citations else ""
+"""
+        if include_citations
+        else ""
+    )
 
-    style_section = """
+    style_section = (
+        """
 ## Response Length
 - Provide comprehensive coverage of the topic
 - Include all relevant details from context
 - Use detailed explanations and examples
-""" if response_style == "comprehensive" else """
+"""
+        if response_style == "comprehensive"
+        else """
 ## Response Length
 - Be concise and direct
 - Focus on key points only
 - Minimize explanatory text
 """
+    )
 
-    custom_section = f"""
+    custom_section = (
+        f"""
 ## Domain-Specific Instructions
 {custom_instructions}
-""" if custom_instructions else ""
+"""
+        if custom_instructions
+        else ""
+    )
 
     return f"""You are a {persona} specializing in {domain}.
 

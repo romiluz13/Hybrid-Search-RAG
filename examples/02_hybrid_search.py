@@ -185,8 +185,8 @@ async def demo_score_extraction() -> None:
     total = vector_score + text_score
     if total > 0:
         print("\n  Contribution analysis:")
-        print(f"    Vector: {vector_score/total*100:.1f}%")
-        print(f"    Text: {text_score/total*100:.1f}%")
+        print(f"    Vector: {vector_score / total * 100:.1f}%")
+        print(f"    Text: {text_score / total * 100:.1f}%")
 
 
 async def main() -> None:

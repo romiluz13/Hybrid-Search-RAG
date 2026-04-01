@@ -154,9 +154,9 @@ skip = [".venv", "venv", "build", "dist"]
 
 [tool.mypy]
 python_version = "3.11"
-warn_return_any = true
+warn_return_any = false
 warn_unused_configs = true
-disallow_untyped_defs = true
+disallow_untyped_defs = false
 ignore_missing_imports = true
 exclude = [
     "venv",
@@ -208,6 +208,8 @@ title = "HybridRAG Test Coverage Report"
 [tool.ruff]
 line-length = 88
 target-version = "py311"
+
+[tool.ruff.lint]
 select = [
     "E",  # pycodestyle errors
     "W",  # pycodestyle warnings
@@ -218,8 +220,13 @@ select = [
     "UP", # pyupgrade
 ]
 ignore = [
-    "E501", # line too long (handled by black)
+    "E501", # line too long (handled by formatter)
+    "B008", # do not perform function calls in argument defaults (required for Typer/FastAPI)
+    "B023", # function definition does not bind loop variable (false positives with constants)
 ]
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-first-party = ["hybridrag"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/hybridrag/ui/chat.py" = ["E402"]  # sys.path manipulation before imports

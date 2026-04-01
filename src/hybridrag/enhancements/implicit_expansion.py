@@ -88,7 +88,10 @@ class ImplicitExpander:
             # Find similar entities via cosine similarity
             similarities: list[tuple[str, float, dict]] = []
 
-            for other_id, (other_desc, other_embedding) in all_entity_embeddings.items():
+            for other_id, (
+                other_desc,
+                other_embedding,
+            ) in all_entity_embeddings.items():
                 if other_id in seen:
                     continue
 
@@ -111,7 +114,9 @@ class ImplicitExpander:
             # Sort by similarity and take top expansions
             similarities.sort(key=lambda x: x[1], reverse=True)
 
-            for other_id, sim_score, other_entity in similarities[: self.max_expansions]:
+            for other_id, sim_score, other_entity in similarities[
+                : self.max_expansions
+            ]:
                 if other_id not in seen:
                     expanded.append(
                         {

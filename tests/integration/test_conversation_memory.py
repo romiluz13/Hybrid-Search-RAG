@@ -54,8 +54,7 @@ class TestConversationMemorySchema:
     async def test_create_session(self, memory, unique_session_id):
         """Test session creation creates document without messages array."""
         session_id = await memory.create_session(
-            session_id=unique_session_id,
-            metadata={"test": "create_session"}
+            session_id=unique_session_id, metadata={"test": "create_session"}
         )
 
         assert session_id == unique_session_id
@@ -71,7 +70,9 @@ class TestConversationMemorySchema:
         await memory.delete_session(session_id)
 
     @pytest.mark.asyncio
-    async def test_add_message_creates_separate_document(self, memory, unique_session_id):
+    async def test_add_message_creates_separate_document(
+        self, memory, unique_session_id
+    ):
         """Test that messages are stored in separate collection."""
         session_id = await memory.create_session(session_id=unique_session_id)
 
@@ -146,12 +147,17 @@ class TestConversationMemoryOperations:
         session_id = await memory.create_session(session_id=unique_session_id)
 
         await memory.add_message(session_id, "user", "What is MongoDB?")
-        await memory.add_message(session_id, "assistant", "MongoDB is a document database.")
+        await memory.add_message(
+            session_id, "assistant", "MongoDB is a document database."
+        )
 
         history = await memory.get_history(session_id)
         assert len(history) == 2
         assert history[0] == {"role": "user", "content": "What is MongoDB?"}
-        assert history[1] == {"role": "assistant", "content": "MongoDB is a document database."}
+        assert history[1] == {
+            "role": "assistant",
+            "content": "MongoDB is a document database.",
+        }
 
         # Cleanup
         await memory.delete_session(session_id)

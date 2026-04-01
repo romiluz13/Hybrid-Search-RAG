@@ -251,7 +251,7 @@ class TestL11EmptyInFiltersWarning:
         with patch(
             "hybridrag.enhancements.filters.atlas_search_filters.logger"
         ) as mock_logger:
-            result = build_atlas_search_filters(config)
+            build_atlas_search_filters(config)
             # Empty in_filters should be dropped and a warning logged
             mock_logger.warning.assert_called()
 
@@ -338,7 +338,7 @@ class TestL16EmbeddingDimValidation:
         from hybridrag.ingestion.types import DocumentChunk
 
         # Create a chunk with wrong-dimension embedding
-        chunk = DocumentChunk(
+        DocumentChunk(
             content="test content",
             index=0,
             start_char=0,

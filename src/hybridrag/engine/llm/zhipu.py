@@ -1,17 +1,8 @@
 import json
 import re
 
-from ..utils import verbose_debug
-
-pass
-import pipmaster as pm  # Pipmaster for dynamic library install
-
-# install specific modules
-if not pm.is_installed("zhipuai"):
-    pm.install("zhipuai")
-
-
 import numpy as np
+import pipmaster as pm  # Pipmaster for dynamic library install
 from openai import (
     APIConnectionError,
     APITimeoutError,
@@ -26,9 +17,14 @@ from tenacity import (
 
 from ..utils import (
     logger,
+    verbose_debug,
     wrap_embedding_func_with_attrs,
 )
 from .types import GPTKeywordExtractionFormat
+
+# install specific modules
+if not pm.is_installed("zhipuai"):
+    pm.install("zhipuai")
 
 
 @retry(
@@ -56,8 +52,10 @@ async def zhipu_complete_if_cache(
     # dynamically load ZhipuAI
     try:
         from zhipuai import ZhipuAI
-    except ImportError:
-        raise ImportError("Please install zhipuai before initialize zhipuai backend.")
+    except ImportError as e:
+        raise ImportError(
+            "Please install zhipuai before initialize zhipuai backend."
+        ) from e
 
     if api_key:
         client = ZhipuAI(api_key=api_key)
@@ -192,8 +190,10 @@ async def zhipu_embedding(
     # dynamically load ZhipuAI
     try:
         from zhipuai import ZhipuAI
-    except ImportError:
-        raise ImportError("Please install zhipuai before initialize zhipuai backend.")
+    except ImportError as e:
+        raise ImportError(
+            "Please install zhipuai before initialize zhipuai backend."
+        ) from e
     if api_key:
         client = ZhipuAI(api_key=api_key)
     else:
@@ -211,6 +211,6 @@ async def zhipu_embedding(
             response = client.embeddings.create(model=model, input=[text], **kwargs)
             embeddings.append(response.data[0].embedding)
         except Exception as e:
-            raise Exception(f"Error calling ChatGLM Embedding API: {str(e)}")
+            raise Exception(f"Error calling ChatGLM Embedding API: {str(e)}") from e
 
     return np.array(embeddings)

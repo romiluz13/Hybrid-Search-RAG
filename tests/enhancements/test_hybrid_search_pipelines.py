@@ -165,7 +165,7 @@ class TestC6ScoreFusionMetaField:
         assert len(add_fields_stages) > 0, "Expected at least one $addFields stage"
         found_score_meta = False
         for stage in add_fields_stages:
-            for field_name, field_val in stage["$addFields"].items():
+            for _field_name, field_val in stage["$addFields"].items():
                 if isinstance(field_val, dict) and "$meta" in field_val:
                     assert field_val["$meta"] == "score", (
                         f"$meta field should be 'score', got '{field_val['$meta']}'"

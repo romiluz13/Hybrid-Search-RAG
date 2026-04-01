@@ -115,7 +115,10 @@ def _handle_bedrock_exception(e: Exception, operation: str = "Bedrock API") -> N
     # Custom Bedrock errors (already properly typed)
     elif isinstance(
         e,
-        BedrockRateLimitError | BedrockConnectionError | BedrockTimeoutError | BedrockError,
+        BedrockRateLimitError
+        | BedrockConnectionError
+        | BedrockTimeoutError
+        | BedrockError,
     ):
         raise
 
@@ -332,7 +335,11 @@ async def bedrock_complete_if_cache(
 
 # Generic Bedrock completion function
 async def bedrock_complete(
-    prompt, system_prompt=None, history_messages=None, keyword_extraction=False, **kwargs
+    prompt,
+    system_prompt=None,
+    history_messages=None,
+    keyword_extraction=False,
+    **kwargs,
 ) -> str | AsyncIterator[str]:
     if history_messages is None:
         history_messages = []

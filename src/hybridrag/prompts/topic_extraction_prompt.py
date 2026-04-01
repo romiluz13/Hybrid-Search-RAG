@@ -28,7 +28,9 @@ from __future__ import annotations
 
 from typing import Final
 
-TOPIC_EXTRACTION_PROMPT: Final[str] = """Extract semantic topics/tags from this text for search and categorization.
+TOPIC_EXTRACTION_PROMPT: Final[
+    str
+] = """Extract semantic topics/tags from this text for search and categorization.
 
 ## Task
 Identify 3-{max_topics} topics that best describe the content of this text.
@@ -73,7 +75,9 @@ Identify 3-{max_topics} topics that best describe the content of this text.
 """
 
 
-BATCH_TOPIC_EXTRACTION_PROMPT: Final[str] = """Extract topics from multiple documents efficiently.
+BATCH_TOPIC_EXTRACTION_PROMPT: Final[
+    str
+] = """Extract topics from multiple documents efficiently.
 
 ## Task
 Process the following documents and extract topics for each.
@@ -115,7 +119,9 @@ Process the following documents and extract topics for each.
 """
 
 
-TOPIC_CLUSTERING_PROMPT: Final[str] = """Group related topics into a hierarchical taxonomy.
+TOPIC_CLUSTERING_PROMPT: Final[
+    str
+] = """Group related topics into a hierarchical taxonomy.
 
 ## Task
 Organize these topics into a logical hierarchy.

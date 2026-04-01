@@ -68,4 +68,3 @@ def get_rerank_instructions(
     }
 
     return instructions_map.get(query_mode)
-

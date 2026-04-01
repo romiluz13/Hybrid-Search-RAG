@@ -155,11 +155,13 @@ def chunking_by_docling(
         # Convert to HybridRAG format
         results = []
         for chunk in chunks:
-            results.append({
-                "tokens": chunk.token_count or len(tokenizer.encode(chunk.content)),
-                "content": chunk.content.strip(),
-                "chunk_order_index": chunk.index,
-            })
+            results.append(
+                {
+                    "tokens": chunk.token_count or len(tokenizer.encode(chunk.content)),
+                    "content": chunk.content.strip(),
+                    "chunk_order_index": chunk.index,
+                }
+            )
 
         logger.info(f"Docling chunker created {len(results)} chunks")
         return results
@@ -3013,20 +3015,22 @@ async def extract_entities(
                     # New entity from gleaning stage
                     maybe_nodes[entity_name] = list(glean_entities)
 
-            for edge_key, glean_edges in glean_edges.items():
+            for edge_key, glean_edge_list in glean_edges.items():
                 if edge_key in maybe_edges:
                     # Compare description lengths and keep the better one
                     original_desc_len = len(
                         maybe_edges[edge_key][0].get("description", "") or ""
                     )
-                    glean_desc_len = len(glean_edges[0].get("description", "") or "")
+                    glean_desc_len = len(
+                        glean_edge_list[0].get("description", "") or ""
+                    )
 
                     if glean_desc_len > original_desc_len:
-                        maybe_edges[edge_key] = list(glean_edges)
+                        maybe_edges[edge_key] = list(glean_edge_list)
                     # Otherwise keep original version
                 else:
                     # New edge from gleaning stage
-                    maybe_edges[edge_key] = list(glean_edges)
+                    maybe_edges[edge_key] = list(glean_edge_list)
 
         # Batch update chunk's llm_cache_list with all collected cache keys
         if cache_keys_collector and text_chunks_storage:
@@ -3520,9 +3524,13 @@ async def _get_vector_context(
                     "content": result["content"],
                     "created_at": result.get("created_at", None),
                     "file_path": result.get("file_path", "unknown_source"),
-                    "source_type": result.get("search_type", "vector"),  # Track search type (hybrid_rrf, hybrid_score, or vector)
+                    "source_type": result.get(
+                        "search_type", "vector"
+                    ),  # Track search type (hybrid_rrf, hybrid_score, or vector)
                     "chunk_id": result.get("id"),  # Add chunk_id for deduplication
-                    "hybrid_score": result.get("distance"),  # Store fusion score for analysis
+                    "hybrid_score": result.get(
+                        "distance"
+                    ),  # Store fusion score for analysis
                 }
                 valid_chunks.append(chunk_with_metadata)
 
@@ -4064,7 +4072,9 @@ async def _build_context_str(
     )
 
     # Extract entity IDs for entity boosting during reranking
-    relevant_entity_ids = set(entity_id_to_original.keys()) if entity_id_to_original else None
+    relevant_entity_ids = (
+        set(entity_id_to_original.keys()) if entity_id_to_original else None
+    )
 
     # Apply token truncation to chunks using the dynamic limit
     truncated_chunks = await process_chunks_unified(
@@ -4540,7 +4550,9 @@ async def _find_related_text_unit_from_entities(
 
     # Step 6: Build result chunks with valid data and update chunk tracking
     result_chunks = []
-    for i, (chunk_id, chunk_data) in enumerate(zip(unique_chunk_ids, chunk_data_list, strict=False)):
+    for i, (chunk_id, chunk_data) in enumerate(
+        zip(unique_chunk_ids, chunk_data_list, strict=False)
+    ):
         if chunk_data is not None and "content" in chunk_data:
             chunk_data_copy = chunk_data.copy()
             chunk_data_copy["source_type"] = "entity"
@@ -4832,7 +4844,9 @@ async def _find_related_text_unit_from_relations(
 
     # Step 6: Build result chunks with valid data and update chunk tracking
     result_chunks = []
-    for i, (chunk_id, chunk_data) in enumerate(zip(unique_chunk_ids, chunk_data_list, strict=False)):
+    for i, (chunk_id, chunk_data) in enumerate(
+        zip(unique_chunk_ids, chunk_data_list, strict=False)
+    ):
         if chunk_data is not None and "content" in chunk_data:
             chunk_data_copy = chunk_data.copy()
             chunk_data_copy["source_type"] = "relationship"

@@ -124,7 +124,7 @@ class BindingOptions:
                             )
                         return parsed
                     except json.JSONDecodeError as e:
-                        raise argparse.ArgumentTypeError(f"Invalid JSON: {e}")
+                        raise argparse.ArgumentTypeError(f"Invalid JSON: {e}") from e
 
                 # Get environment variable with JSON parsing
                 env_value = get_env_value(f"{arg_item['env_name']}", argparse.SUPPRESS)
@@ -152,7 +152,7 @@ class BindingOptions:
                             )
                         return parsed
                     except json.JSONDecodeError as e:
-                        raise argparse.ArgumentTypeError(f"Invalid JSON: {e}")
+                        raise argparse.ArgumentTypeError(f"Invalid JSON: {e}") from e
 
                 # Get environment variable with JSON parsing
                 env_value = get_env_value(f"{arg_item['env_name']}", argparse.SUPPRESS)

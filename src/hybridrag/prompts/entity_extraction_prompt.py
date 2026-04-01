@@ -28,7 +28,9 @@ from __future__ import annotations
 
 from typing import Final
 
-ENTITY_EXTRACTION_PROMPT: Final[str] = """You are a Knowledge Graph Specialist. Extract entities and relationships from the text.
+ENTITY_EXTRACTION_PROMPT: Final[
+    str
+] = """You are a Knowledge Graph Specialist. Extract entities and relationships from the text.
 
 ## Task
 Extract all meaningful entities and their relationships from the provided text.
@@ -89,7 +91,9 @@ Return a JSON object with two arrays: "entities" and "relationships"
 """
 
 
-QUERY_ENTITY_EXTRACTION_PROMPT: Final[str] = """Extract key entities from this search query for knowledge graph lookup.
+QUERY_ENTITY_EXTRACTION_PROMPT: Final[
+    str
+] = """Extract key entities from this search query for knowledge graph lookup.
 
 ## Task
 Identify entities in the query that could be used to search a knowledge graph.

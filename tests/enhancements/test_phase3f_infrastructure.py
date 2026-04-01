@@ -20,7 +20,7 @@ class TestM34InternalExceptionsNotLeaked:
 
     def test_ingest_endpoint_does_not_expose_raw_exception(self):
         """The ingest exception handler must use a generic error message."""
-        source_module = __import__(
+        __import__(
             "hybridrag.api.main",
             fromlist=["register_routes"],
         )
@@ -124,7 +124,7 @@ class TestM41LangfuseDefersEnvReads:
 
         for node in tree.body:
             # Check module-level statements (not inside function/class)
-            if isinstance(node, (ast.Try, ast.If)):
+            if isinstance(node, ast.Try | ast.If):
                 # Walk the try/if block for env reads
                 for sub_node in ast.walk(node):
                     if isinstance(sub_node, ast.Call):

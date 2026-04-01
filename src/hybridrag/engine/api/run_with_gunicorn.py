@@ -252,9 +252,7 @@ def main():
                         self.cfg.set(key, value)
 
             if hasattr(gunicorn_config, "logconfig_dict"):
-                self.cfg.set(
-                    "logconfig_dict", gunicorn_config.logconfig_dict
-                )
+                self.cfg.set("logconfig_dict", gunicorn_config.logconfig_dict)
 
         def load(self):
             # Import the application

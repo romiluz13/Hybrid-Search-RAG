@@ -1,14 +1,7 @@
 import os
 
-pass
-
-import pipmaster as pm  # Pipmaster for dynamic library install
-
-# install specific modules
-if not pm.is_installed("openai"):
-    pm.install("openai")
-
 import numpy as np
+import pipmaster as pm  # Pipmaster for dynamic library install
 from openai import (
     APIConnectionError,
     APITimeoutError,
@@ -25,6 +18,10 @@ from tenacity import (
 from ..utils import (
     wrap_embedding_func_with_attrs,
 )
+
+# install specific modules
+if not pm.is_installed("openai"):
+    pm.install("openai")
 
 
 @wrap_embedding_func_with_attrs(embedding_dim=2048, max_token_size=8192)

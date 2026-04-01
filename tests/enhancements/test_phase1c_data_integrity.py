@@ -181,7 +181,7 @@ class TestC15IntegrationTestCleanup:
         """Extract the source of the rag fixture function."""
         tree = ast.parse(module_source)
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 if node.name == "rag":
                     lines = module_source.split("\n")
                     start = node.lineno - 1

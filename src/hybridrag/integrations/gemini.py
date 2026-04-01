@@ -65,7 +65,9 @@ class GeminiLLM:
             Generated text response
         """
         logger.info(f"[LLM] Starting generation with model={self.model}")
-        logger.debug(f"[LLM] Prompt length: {len(prompt)} chars, system_prompt: {'yes' if system_prompt else 'no'}")
+        logger.debug(
+            f"[LLM] Prompt length: {len(prompt)} chars, system_prompt: {'yes' if system_prompt else 'no'}"
+        )
 
         # Combine system prompt with user prompt if provided
         full_prompt = prompt
@@ -139,9 +141,7 @@ class GeminiEmbedder:
                 response = await self._client.aio.models.embed_content(
                     model=self.model,
                     contents=batch,
-                    config=types.EmbedContentConfig(
-                        task_type="RETRIEVAL_DOCUMENT"
-                    ),
+                    config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
                 )
 
                 # Extract embeddings from response
@@ -170,7 +170,9 @@ class GeminiEmbedder:
                         else:
                             raise ValueError("No embeddings returned")
                     except Exception as individual_error:
-                        logger.error(f"[EMBED] Individual embedding failed: {individual_error}")
+                        logger.error(
+                            f"[EMBED] Individual embedding failed: {individual_error}"
+                        )
                         raise
 
         return np.array(all_embeddings, dtype=np.float32)

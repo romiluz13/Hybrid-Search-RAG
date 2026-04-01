@@ -149,12 +149,14 @@ async def parse_request_body(
 
         # Create an instance of the model
         return model_class(**body)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid JSON in request body")
+    except json.JSONDecodeError as je:
+        raise HTTPException(
+            status_code=400, detail="Invalid JSON in request body"
+        ) from je
     except Exception as e:
         raise HTTPException(
             status_code=400, detail=f"Error parsing request body: {str(e)}"
-        )
+        ) from e
 
 
 def estimate_tokens(text: str) -> int:
@@ -458,7 +460,7 @@ class OllamaAPI:
                     }
             except Exception as e:
                 logger.error(f"Ollama generate error: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e
 
         @self.router.post(
             "/chat", dependencies=[Depends(combined_auth)], include_in_schema=True
@@ -721,4 +723,4 @@ class OllamaAPI:
                     }
             except Exception as e:
                 logger.error(f"Ollama chat error: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e

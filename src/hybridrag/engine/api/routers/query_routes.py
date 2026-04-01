@@ -453,7 +453,7 @@ def create_query_routes(rag, api_key: str | None = None, top_k: int = 60):
                 return QueryResponse(response=response_content, references=None)
         except Exception as e:
             logger.error(f"Error processing query: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post(
         "/query/stream",
@@ -739,7 +739,7 @@ def create_query_routes(rag, api_key: str | None = None, top_k: int = 60):
             )
         except Exception as e:
             logger.error(f"Error processing streaming query: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post(
         "/query/data",
@@ -1156,6 +1156,6 @@ def create_query_routes(rag, api_key: str | None = None, top_k: int = 60):
                 )
         except Exception as e:
             logger.error(f"Error processing data query: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     return router

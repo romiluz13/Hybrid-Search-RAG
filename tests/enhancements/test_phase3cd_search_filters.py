@@ -96,7 +96,7 @@ class TestM17SearchPathsNestedList:
         )
 
         # Call with search_paths=None -- should resolve to ["content"]
-        result = await text_only_search(
+        await text_only_search(
             collection=mock_collection,
             query_text="test",
             top_k=5,
@@ -133,7 +133,7 @@ class TestM17SearchPathsNestedList:
             return_value=iter([])
         )
 
-        result = await text_only_search(
+        await text_only_search(
             collection=mock_collection,
             query_text="test",
             top_k=5,
@@ -180,7 +180,7 @@ class TestM18AtlasSearchScoreBoost:
         assert "value" in boost, f"Expected 'value' key in boost, got: {boost}"
         assert "path" not in boost, f"Unexpected 'path' key in boost: {boost}"
         assert "undefined" not in boost, f"Unexpected 'undefined' key in boost: {boost}"
-        assert isinstance(boost["value"], (int, float))
+        assert isinstance(boost["value"], int | float)
 
 
 # ---------------------------------------------------------------------------

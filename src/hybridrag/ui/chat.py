@@ -17,7 +17,9 @@ import sys
 import chainlit as cl
 
 # Add project paths
-_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_project_root = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 sys.path.insert(0, os.path.join(_project_root, "src"))
 
 from hybridrag import Settings, create_hybridrag
@@ -25,6 +27,7 @@ from hybridrag import Settings, create_hybridrag
 # ============================================================================
 # Knowledge Base Display Functions
 # ============================================================================
+
 
 def _spark_bar(value: float, max_value: float, width: int = 16) -> str:
     """Create a compact spark bar for quick visual comparison."""
@@ -99,7 +102,9 @@ async def format_dashboard_panel(rag, session_id: str, mode: str) -> str:
 
     lines = []
     lines.append("# ✨ HybridRAG Studio")
-    lines.append("**The developer‑first command center for demos, debug, and discovery.**")
+    lines.append(
+        "**The developer‑first command center for demos, debug, and discovery.**"
+    )
     lines.append("")
     lines.append("### 🧭 Workspace Snapshot")
     lines.append("| Field | Value |")
@@ -107,18 +112,28 @@ async def format_dashboard_panel(rag, session_id: str, mode: str) -> str:
     lines.append(f"| Workspace | `{workspace}` |")
     lines.append(f"| Session | `{session_short}` |")
     lines.append(f"| Mode | **{mode}** |")
-    lines.append(f"| LLM | `{status.get('llm_provider', 'unknown')}` · `{status.get('llm_model', 'unknown')}` |")
+    lines.append(
+        f"| LLM | `{status.get('llm_provider', 'unknown')}` · `{status.get('llm_model', 'unknown')}` |"
+    )
     lines.append(f"| Embeddings | `{status.get('embedding_model', 'unknown')}` |")
-    lines.append(f"| Reranker | `{status.get('rerank_model', 'disabled') or 'disabled'}` |")
+    lines.append(
+        f"| Reranker | `{status.get('rerank_model', 'disabled') or 'disabled'}` |"
+    )
     lines.append("")
 
     lines.append("### 📊 Knowledge Base Health")
     lines.append("| Metric | Count | Signal |")
     lines.append("|--------|-------|--------|")
-    lines.append(f"| Documents | **{docs_total:,}** | `{_spark_bar(docs_total, max_metric)}` |")
+    lines.append(
+        f"| Documents | **{docs_total:,}** | `{_spark_bar(docs_total, max_metric)}` |"
+    )
     lines.append(f"| Chunks | **{chunks:,}** | `{_spark_bar(chunks, max_metric)}` |")
-    lines.append(f"| Entities | **{entities:,}** | `{_spark_bar(entities, max_metric)}` |")
-    lines.append(f"| Relationships | **{relationships:,}** | `{_spark_bar(relationships, max_metric)}` |")
+    lines.append(
+        f"| Entities | **{entities:,}** | `{_spark_bar(entities, max_metric)}` |"
+    )
+    lines.append(
+        f"| Relationships | **{relationships:,}** | `{_spark_bar(relationships, max_metric)}` |"
+    )
     lines.append("")
 
     lines.append("### 🧪 Ingestion Health")
@@ -155,8 +170,15 @@ async def format_dashboard_panel(rag, session_id: str, mode: str) -> str:
             file_name = doc["file"]
             if len(file_name) > 32:
                 file_name = file_name[:29] + "..."
-            status_icon = {"processed": "✅", "pending": "⏳", "processing": "🔄", "failed": "❌"}.get(doc["status"], "📄")
-            lines.append(f"| `{file_name}` | {status_icon} {doc['status']} | {doc['chunks']} |")
+            status_icon = {
+                "processed": "✅",
+                "pending": "⏳",
+                "processing": "🔄",
+                "failed": "❌",
+            }.get(doc["status"], "📄")
+            lines.append(
+                f"| `{file_name}` | {status_icon} {doc['status']} | {doc['chunks']} |"
+            )
     else:
         lines.append("*No documents indexed yet.*")
     lines.append("")
@@ -164,10 +186,13 @@ async def format_dashboard_panel(rag, session_id: str, mode: str) -> str:
     lines.append("### 💡 Demo Prompts")
     lines.append("- *“Show me the highest SLA credit tier and how to claim it.”*")
     lines.append("- *“Summarize the release freeze rules and exceptions.”*")
-    lines.append("- *“What’s our current ingestion health and how many entities exist?”*")
+    lines.append(
+        "- *“What’s our current ingestion health and how many entities exist?”*"
+    )
     lines.append("")
 
     return "\n".join(lines)
+
 
 async def format_knowledge_base_stats(rag) -> str:
     """Format knowledge base statistics as a beautiful markdown display."""
@@ -191,17 +216,27 @@ async def format_knowledge_base_stats(rag) -> str:
         # Stats grid
         lines.append("| Metric | Count | Signal |")
         lines.append("|--------|-------|--------|")
-        lines.append(f"| Documents | **{docs_total:,}** | `{_spark_bar(docs_total, max_metric)}` |")
-        lines.append(f"| Chunks | **{chunks:,}** | `{_spark_bar(chunks, max_metric)}` |")
-        lines.append(f"| Entities | **{entities:,}** | `{_spark_bar(entities, max_metric)}` |")
-        lines.append(f"| Relationships | **{relationships:,}** | `{_spark_bar(relationships, max_metric)}` |")
+        lines.append(
+            f"| Documents | **{docs_total:,}** | `{_spark_bar(docs_total, max_metric)}` |"
+        )
+        lines.append(
+            f"| Chunks | **{chunks:,}** | `{_spark_bar(chunks, max_metric)}` |"
+        )
+        lines.append(
+            f"| Entities | **{entities:,}** | `{_spark_bar(entities, max_metric)}` |"
+        )
+        lines.append(
+            f"| Relationships | **{relationships:,}** | `{_spark_bar(relationships, max_metric)}` |"
+        )
         lines.append("")
 
         # Status breakdown if there are documents
         if by_status:
             lines.append("### Document Status")
             for status, count in sorted(by_status.items()):
-                icon = {"processed": "✅", "pending": "⏳", "failed": "❌"}.get(status, "📄")
+                icon = {"processed": "✅", "pending": "⏳", "failed": "❌"}.get(
+                    status, "📄"
+                )
                 lines.append(f"- {icon} **{status}**: {count}")
             lines.append("")
 
@@ -214,12 +249,18 @@ async def format_knowledge_base_stats(rag) -> str:
                 file_name = doc["file"]
                 if len(file_name) > 30:
                     file_name = file_name[:27] + "..."
-                status_icon = {"processed": "✅", "pending": "⏳", "failed": "❌"}.get(doc["status"], "📄")
-                lines.append(f"| `{file_name}` | {status_icon} {doc['status']} | {doc['chunks']} |")
+                status_icon = {"processed": "✅", "pending": "⏳", "failed": "❌"}.get(
+                    doc["status"], "📄"
+                )
+                lines.append(
+                    f"| `{file_name}` | {status_icon} {doc['status']} | {doc['chunks']} |"
+                )
             lines.append("")
 
         if docs_total == 0:
-            lines.append("> **No documents yet.** Upload PDF, TXT, or MD files to get started!")
+            lines.append(
+                "> **No documents yet.** Upload PDF, TXT, or MD files to get started!"
+            )
             lines.append("")
 
         return "\n".join(lines)
@@ -250,7 +291,9 @@ async def format_kb_management_panel(rag) -> tuple[str, list]:
         lines.append("```")
         lines.append("┌─────────────────────────────────────────────┐")
         lines.append(f"│  📄 Documents: {docs_total:<7} │  📦 Chunks: {chunks:<9} │")
-        lines.append(f"│  🔷 Entities:  {entities:<7} │  🔗 Relations: {relationships:<7} │")
+        lines.append(
+            f"│  🔷 Entities:  {entities:<7} │  🔗 Relations: {relationships:<7} │"
+        )
         lines.append("└─────────────────────────────────────────────┘")
         lines.append("```")
         lines.append("")
@@ -260,7 +303,9 @@ async def format_kb_management_panel(rag) -> tuple[str, list]:
 
         if recent_docs:
             lines.append("### 📁 Documents")
-            lines.append("*Delete is only enabled for processed documents to prevent partial removal.*")
+            lines.append(
+                "*Delete is only enabled for processed documents to prevent partial removal.*"
+            )
             lines.append("")
 
             for i, doc in enumerate(recent_docs[:10]):  # Show up to 10 docs
@@ -274,7 +319,7 @@ async def format_kb_management_panel(rag) -> tuple[str, list]:
                     "processed": "✅",
                     "pending": "⏳",
                     "processing": "🔄",
-                    "failed": "❌"
+                    "failed": "❌",
                 }.get(status, "📄")
 
                 # Display name (truncate if needed)
@@ -282,7 +327,7 @@ async def format_kb_management_panel(rag) -> tuple[str, list]:
                 if len(display_name) > 35:
                     display_name = display_name[:32] + "..."
 
-                lines.append(f"**{i+1}.** {status_icon} `{display_name}`")
+                lines.append(f"**{i + 1}.** {status_icon} `{display_name}`")
                 lines.append(f"   └── Chunks: **{chunk_count}** | Status: **{status}**")
                 lines.append("")
 
@@ -293,7 +338,7 @@ async def format_kb_management_panel(rag) -> tuple[str, list]:
                         name="delete_doc",
                         payload={"doc_id": doc_id, "file_name": file_name},
                         label=f"🗑️ Delete {file_name[:20]}...",
-                        tooltip=f"Delete document: {file_name}"
+                        tooltip=f"Delete document: {file_name}",
                     )
                     actions.append(action)
         else:
@@ -305,7 +350,9 @@ async def format_kb_management_panel(rag) -> tuple[str, list]:
             lines.append("")
 
         lines.append("---")
-        lines.append("**Commands:** `/dashboard` | `/kb` | `/manage` | `/upload` | `/status` | `/help`")
+        lines.append(
+            "**Commands:** `/dashboard` | `/kb` | `/manage` | `/upload` | `/status` | `/help`"
+        )
         lines.append("")
 
         return "\n".join(lines), actions
@@ -317,6 +364,7 @@ async def format_kb_management_panel(rag) -> tuple[str, list]:
 # ============================================================================
 # Action Builders
 # ============================================================================
+
 
 def build_dashboard_actions(current_mode: str) -> list:
     """Create the primary action dock for the dashboard."""
@@ -339,22 +387,61 @@ def build_dashboard_actions(current_mode: str) -> list:
     ]
 
     actions = [
-        cl.Action(name="show_dashboard", payload={}, label="🏠 Dashboard", tooltip="Show main dashboard"),
-        cl.Action(name="show_kb_manager", payload={}, label="📚 KB Manager", tooltip="Manage documents"),
-        cl.Action(name="upload_files", payload={}, label="📤 Upload", tooltip="Upload documents"),
-        cl.Action(name="ingest_url", payload={}, label="🌐 Ingest URL", tooltip="Ingest a web page"),
-        cl.Action(name="crawl_website", payload={}, label="🕷️ Crawl", tooltip="Crawl a website"),
-        cl.Action(name="show_system_status", payload={}, label="🧪 System", tooltip="Show system status"),
-        cl.Action(name="show_memory", payload={}, label="🧠 Memory", tooltip="View conversation memory"),
-        cl.Action(name="show_help", payload={}, label="❓ Help", tooltip="Show help & commands"),
+        cl.Action(
+            name="show_dashboard",
+            payload={},
+            label="🏠 Dashboard",
+            tooltip="Show main dashboard",
+        ),
+        cl.Action(
+            name="show_kb_manager",
+            payload={},
+            label="📚 KB Manager",
+            tooltip="Manage documents",
+        ),
+        cl.Action(
+            name="upload_files",
+            payload={},
+            label="📤 Upload",
+            tooltip="Upload documents",
+        ),
+        cl.Action(
+            name="ingest_url",
+            payload={},
+            label="🌐 Ingest URL",
+            tooltip="Ingest a web page",
+        ),
+        cl.Action(
+            name="crawl_website", payload={}, label="🕷️ Crawl", tooltip="Crawl a website"
+        ),
+        cl.Action(
+            name="show_system_status",
+            payload={},
+            label="🧪 System",
+            tooltip="Show system status",
+        ),
+        cl.Action(
+            name="show_memory",
+            payload={},
+            label="🧠 Memory",
+            tooltip="View conversation memory",
+        ),
+        cl.Action(
+            name="show_help",
+            payload={},
+            label="❓ Help",
+            tooltip="Show help & commands",
+        ),
     ]
 
     # Keep the primary dock compact, and expose modes after it
     return actions + mode_actions
 
+
 # ============================================================================
 # File Processing Functions
 # ============================================================================
+
 
 def extract_text_from_pdf(file_path: str) -> str:
     """Extract text from PDF using PyMuPDF."""
@@ -371,15 +458,17 @@ def extract_text_from_pdf(file_path: str) -> str:
 
         doc.close()
         return "\n\n".join(text_parts)
-    except ImportError:
-        raise ImportError("PyMuPDF not installed. Run: pip install pymupdf")
+    except ImportError as e:
+        raise ImportError("PyMuPDF not installed. Run: pip install pymupdf") from e
 
 
 def extract_text_from_file(file_path: str, mime_type: str) -> str:
     """Extract text from various file types."""
     if mime_type == "application/pdf" or file_path.endswith(".pdf"):
         return extract_text_from_pdf(file_path)
-    elif mime_type in ["text/plain", "text/markdown"] or file_path.endswith((".txt", ".md")):
+    elif mime_type in ["text/plain", "text/markdown"] or file_path.endswith(
+        (".txt", ".md")
+    ):
         with open(file_path, encoding="utf-8") as f:
             return f.read()
     else:
@@ -390,13 +479,12 @@ def extract_text_from_file(file_path: str, mime_type: str) -> str:
 # Chainlit Event Handlers
 # ============================================================================
 
+
 @cl.on_chat_start
 async def on_chat_start():
     """Initialize HybridRAG when chat session starts."""
 
-    await cl.Message(
-        content="⚡ Initializing HybridRAG... Please wait."
-    ).send()
+    await cl.Message(content="⚡ Initializing HybridRAG... Please wait.").send()
 
     try:
         # Get settings from environment
@@ -407,8 +495,11 @@ async def on_chat_start():
 
         # Create a conversation session for this chat (persisted in MongoDB)
         import uuid
+
         session_id = str(uuid.uuid4())
-        await rag.create_conversation_session(session_id, metadata={"source": "chainlit"})
+        await rag.create_conversation_session(
+            session_id, metadata={"source": "chainlit"}
+        )
 
         # Store in session
         cl.user_session.set("rag", rag)
@@ -416,7 +507,9 @@ async def on_chat_start():
         cl.user_session.set("mode", "mix")  # Default mode
 
         # Main dashboard
-        dashboard = await format_dashboard_panel(rag, session_id, cl.user_session.get("mode", "mix"))
+        dashboard = await format_dashboard_panel(
+            rag, session_id, cl.user_session.get("mode", "mix")
+        )
         actions = build_dashboard_actions(cl.user_session.get("mode", "mix"))
         await cl.Message(content=dashboard, actions=actions).send()
 
@@ -429,6 +522,7 @@ async def on_chat_start():
 # ============================================================================
 # Action Callbacks
 # ============================================================================
+
 
 @cl.action_callback("delete_doc")
 async def on_delete_doc(action: cl.Action):
@@ -521,22 +615,24 @@ async def on_show_system_status(action: cl.Action):
 
     try:
         status = await rag.get_status()
-        workspace = os.getenv("MONGODB_WORKSPACE") or os.getenv("WORKSPACE") or "default"
+        workspace = (
+            os.getenv("MONGODB_WORKSPACE") or os.getenv("WORKSPACE") or "default"
+        )
         status_text = f"""## 🧪 System Status
 
 | Component | Value |
 |-----------|-------|
 | Workspace | `{workspace}` |
-| LLM Provider | **{status.get('llm_provider', 'unknown')}** |
-| LLM Model | `{status.get('llm_model', 'unknown')}` |
-| Embedding | `{status.get('embedding_model', 'unknown')}` |
-| Reranker | `{status.get('rerank_model', 'disabled') or 'disabled'}` |
-| Query Mode | **{cl.user_session.get('mode', 'mix')}** |
-| Database | `{status.get('mongodb_database', 'unknown')}` |
+| LLM Provider | **{status.get("llm_provider", "unknown")}** |
+| LLM Model | `{status.get("llm_model", "unknown")}` |
+| Embedding | `{status.get("embedding_model", "unknown")}` |
+| Reranker | `{status.get("rerank_model", "disabled") or "disabled"}` |
+| Query Mode | **{cl.user_session.get("mode", "mix")}** |
+| Database | `{status.get("mongodb_database", "unknown")}` |
 
 ### 🔧 Enhancements
-- Implicit Expansion: {'✅ Enabled' if status.get('enhancements', {}).get('implicit_expansion') else '❌ Disabled'}
-- Entity Boosting: {'✅ Enabled' if status.get('enhancements', {}).get('entity_boosting') else '❌ Disabled'}
+- Implicit Expansion: {"✅ Enabled" if status.get("enhancements", {}).get("implicit_expansion") else "❌ Disabled"}
+- Entity Boosting: {"✅ Enabled" if status.get("enhancements", {}).get("entity_boosting") else "❌ Disabled"}
 """
         await cl.Message(content=status_text).send()
     except Exception as e:
@@ -568,12 +664,20 @@ async def on_set_mode(action: cl.Action):
     cl.user_session.set("mode", mode)
     await cl.Message(content=f"✅ Query mode changed to **{mode}**").send()
 
+
 @cl.action_callback("upload_files")
 async def on_upload_files(action: cl.Action):
     """Handle upload files action."""
     files = await cl.AskFileMessage(
         content="📤 **Upload documents to add to Knowledge Base**\n\nSupported formats: PDF, TXT, MD",
-        accept=["application/pdf", "text/plain", "text/markdown", ".pdf", ".txt", ".md"],
+        accept=[
+            "application/pdf",
+            "text/plain",
+            "text/markdown",
+            ".pdf",
+            ".txt",
+            ".md",
+        ],
         max_size_mb=50,
         max_files=10,
     ).send()
@@ -602,6 +706,7 @@ async def on_ingest_url(action: cl.Action):
 
         # Validate URL
         from urllib.parse import urlparse
+
         try:
             parsed = urlparse(url)
             if not all([parsed.scheme in ["http", "https"], parsed.netloc]):
@@ -624,14 +729,14 @@ async def on_ingest_url(action: cl.Action):
 **Title:** {result.title}
 **Chunks Created:** {result.chunks_created}
 **Source:** {result.source}
-**Processing Time:** {result.processing_time_ms/1000:.2f}s
+**Processing Time:** {result.processing_time_ms / 1000:.2f}s
 
 You can now query this content!"""
             else:
                 progress_msg.content = f"""❌ **URL Ingestion Failed**
 
 **URL:** {url}
-**Errors:** {', '.join(result.errors)}"""
+**Errors:** {", ".join(result.errors)}"""
 
             await progress_msg.update()
         except Exception as e:
@@ -669,6 +774,7 @@ async def on_crawl_website(action: cl.Action):
 
         # Validate URL
         from urllib.parse import urlparse
+
         try:
             parsed = urlparse(url)
             if not all([parsed.scheme in ["http", "https"], parsed.netloc]):
@@ -679,10 +785,13 @@ async def on_crawl_website(action: cl.Action):
             return
 
         # Show progress
-        progress_msg = cl.Message(content=f"⏳ **Crawling website...**\n\nURL: {url}\nMax pages: {max_pages}")
+        progress_msg = cl.Message(
+            content=f"⏳ **Crawling website...**\n\nURL: {url}\nMax pages: {max_pages}"
+        )
         await progress_msg.send()
 
         try:
+
             async def progress_callback(current: int, total: int) -> None:
                 progress_msg.content = f"""⏳ **Crawling website...**
 
@@ -711,7 +820,7 @@ You can now query this content!"""
 
 **URL:** {url}
 **Pages:** 0/{len(results)} successful
-**Errors:** {', '.join(results[0].errors) if results else 'No pages extracted'}"""
+**Errors:** {", ".join(results[0].errors) if results else "No pages extracted"}"""
 
             await progress_msg.update()
         except Exception as e:
@@ -725,17 +834,42 @@ You can now query this content!"""
 
 # Common greetings that shouldn't trigger RAG retrieval
 GREETINGS = {
-    "hello", "hi", "hey", "hola", "greetings", "good morning", "good afternoon",
-    "good evening", "howdy", "yo", "sup", "what's up", "whats up", "hi there",
-    "hello there", "hey there", "hiya", "heya"
+    "hello",
+    "hi",
+    "hey",
+    "hola",
+    "greetings",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "howdy",
+    "yo",
+    "sup",
+    "what's up",
+    "whats up",
+    "hi there",
+    "hello there",
+    "hey there",
+    "hiya",
+    "heya",
 }
 
 # Meta-questions about the system/knowledge base
 META_PATTERNS = [
-    "what do you know", "what's in your", "whats in your", "what is in your",
-    "do you have anything", "have anything in", "knowledge base", "what can you",
-    "what documents", "what files", "what data", "tell me about yourself",
-    "who are you", "what are you"
+    "what do you know",
+    "what's in your",
+    "whats in your",
+    "what is in your",
+    "do you have anything",
+    "have anything in",
+    "knowledge base",
+    "what can you",
+    "what documents",
+    "what files",
+    "what data",
+    "tell me about yourself",
+    "who are you",
+    "what are you",
 ]
 
 
@@ -755,13 +889,16 @@ def is_meta_question(text: str) -> bool:
 # Message Handler
 # ============================================================================
 
+
 @cl.on_message
 async def on_message(message: cl.Message):
     """Handle incoming messages."""
 
     rag = cl.user_session.get("rag")
     if not rag:
-        await cl.Message(content="❌ RAG system not initialized. Please refresh the page.").send()
+        await cl.Message(
+            content="❌ RAG system not initialized. Please refresh the page."
+        ).send()
         return
 
     # Check for file uploads
@@ -779,13 +916,13 @@ async def on_message(message: cl.Message):
     if is_greeting(text):
         await cl.Message(
             content="👋 Hello! I'm your **HybridRAG** assistant.\n\n"
-                    "I can help you with questions about your uploaded documents.\n\n"
-                    "**Try asking me:**\n"
-                    "- Questions about content in your documents\n"
-                    "- Summaries or explanations of topics\n"
-                    "- Specific details or facts\n\n"
-                    "📤 Upload a PDF, TXT, or MD file to get started!\n\n"
-                    "Tip: Open the **Dashboard** with `/dashboard` to manage everything."
+            "I can help you with questions about your uploaded documents.\n\n"
+            "**Try asking me:**\n"
+            "- Questions about content in your documents\n"
+            "- Summaries or explanations of topics\n"
+            "- Specific details or facts\n\n"
+            "📤 Upload a PDF, TXT, or MD file to get started!\n\n"
+            "Tip: Open the **Dashboard** with `/dashboard` to manage everything."
         ).send()
         return
 
@@ -793,16 +930,16 @@ async def on_message(message: cl.Message):
     if is_meta_question(text):
         await cl.Message(
             content="🤖 I'm **HybridRAG** - a hybrid Retrieval-Augmented Generation system:\n\n"
-                    "**Powered by:**\n"
-                    "- 🍃 **MongoDB Atlas** - vector + graph storage\n"
-                    "- 🚀 **Voyage AI** - embeddings & reranking\n"
-                    "- 🧠 **Multi-provider LLM** - response generation\n"
-                    "- 🔗 **Knowledge Graph** - entity extraction & querying\n\n"
-                    "Type `/dashboard` to open the developer cockpit.\n\n"
-                    "**Try asking:**\n"
-                    "- Questions about your uploaded documents\n"
-                    "- Summaries of specific topics\n"
-                    "- Relationship queries between concepts"
+            "**Powered by:**\n"
+            "- 🍃 **MongoDB Atlas** - vector + graph storage\n"
+            "- 🚀 **Voyage AI** - embeddings & reranking\n"
+            "- 🧠 **Multi-provider LLM** - response generation\n"
+            "- 🔗 **Knowledge Graph** - entity extraction & querying\n\n"
+            "Type `/dashboard` to open the developer cockpit.\n\n"
+            "**Try asking:**\n"
+            "- Questions about your uploaded documents\n"
+            "- Summaries of specific topics\n"
+            "- Relationship queries between concepts"
         ).send()
         return
 
@@ -813,6 +950,7 @@ async def on_message(message: cl.Message):
 # ============================================================================
 # File Upload with Progress Tracking
 # ============================================================================
+
 
 def format_time(seconds: float) -> str:
     """Format seconds into human readable time."""
@@ -965,11 +1103,9 @@ async def handle_file_upload_with_progress(elements: list, rag):
 """
             await progress_msg.update()
 
-            files_processed.append({
-                "name": file_name,
-                "chars": char_count,
-                "duration": file_duration
-            })
+            files_processed.append(
+                {"name": file_name, "chars": char_count, "duration": file_duration}
+            )
 
         except Exception as e:
             errors.append(f"`{file_name}`: {str(e)}")
@@ -998,13 +1134,15 @@ async def handle_file_upload_with_progress(elements: list, rag):
             f"| Files Processed | **{len(files_processed)}/{total_files}** |",
             f"| Total Characters | **{total_chars:,}** |",
             f"| Total Time | **{format_time(total_duration)}** |",
-            f"| Avg Speed | **{total_chars/total_duration:,.0f} chars/sec** |",
+            f"| Avg Speed | **{total_chars / total_duration:,.0f} chars/sec** |",
             "",
             "### 📁 Files",
         ]
 
         for f in files_processed:
-            summary_lines.append(f"- ✅ `{f['name']}` ({f['chars']:,} chars, {format_time(f['duration'])})")
+            summary_lines.append(
+                f"- ✅ `{f['name']}` ({f['chars']:,} chars, {format_time(f['duration'])})"
+            )
 
         if errors:
             summary_lines.append("")
@@ -1018,7 +1156,10 @@ async def handle_file_upload_with_progress(elements: list, rag):
         progress_msg.content = "\n".join(summary_lines)
         await progress_msg.update()
     else:
-        progress_msg.content = "## ❌ Ingestion Failed\n\nNo files were processed successfully.\n\n### Errors\n" + "\n".join(f"- {e}" for e in errors)
+        progress_msg.content = (
+            "## ❌ Ingestion Failed\n\nNo files were processed successfully.\n\n### Errors\n"
+            + "\n".join(f"- {e}" for e in errors)
+        )
         await progress_msg.update()
 
 
@@ -1032,6 +1173,7 @@ async def handle_file_upload(elements: list, rag):
 # Command Handler
 # ============================================================================
 
+
 async def handle_command(text: str, rag):
     """Handle slash commands."""
 
@@ -1043,9 +1185,13 @@ async def handle_command(text: str, rag):
         valid_modes = ["local", "global", "hybrid", "naive", "mix", "bypass"]
         if args.lower() in valid_modes:
             cl.user_session.set("mode", args.lower())
-            await cl.Message(content=f"✅ Query mode changed to **{args.lower()}**").send()
+            await cl.Message(
+                content=f"✅ Query mode changed to **{args.lower()}**"
+            ).send()
         else:
-            await cl.Message(content=f"❌ Invalid mode. Valid modes: {', '.join(valid_modes)}").send()
+            await cl.Message(
+                content=f"❌ Invalid mode. Valid modes: {', '.join(valid_modes)}"
+            ).send()
 
     elif command == "/kb":
         # Quick knowledge base statistics
@@ -1068,19 +1214,19 @@ async def handle_command(text: str, rag):
             name="upload_files",
             payload={},
             label="📤 Upload Files",
-            tooltip="Upload new documents to the knowledge base"
+            tooltip="Upload new documents to the knowledge base",
         )
         ingest_url_action = cl.Action(
             name="ingest_url",
             payload={},
             label="🌐 Ingest URL",
-            tooltip="Extract content from a single web URL"
+            tooltip="Extract content from a single web URL",
         )
         crawl_website_action = cl.Action(
             name="crawl_website",
             payload={},
             label="🕷️ Crawl Website",
-            tooltip="Crawl and ingest multiple pages from a website"
+            tooltip="Crawl and ingest multiple pages from a website",
         )
         actions.insert(0, crawl_website_action)
         actions.insert(0, ingest_url_action)
@@ -1092,7 +1238,14 @@ async def handle_command(text: str, rag):
         # Trigger file upload dialog
         files = await cl.AskFileMessage(
             content="📤 **Upload documents to Knowledge Base**\n\nSupported: PDF, TXT, MD (max 50MB each)",
-            accept=["application/pdf", "text/plain", "text/markdown", ".pdf", ".txt", ".md"],
+            accept=[
+                "application/pdf",
+                "text/plain",
+                "text/markdown",
+                ".pdf",
+                ".txt",
+                ".md",
+            ],
             max_size_mb=50,
             max_files=10,
         ).send()
@@ -1103,22 +1256,24 @@ async def handle_command(text: str, rag):
     elif command == "/status":
         try:
             status = await rag.get_status()
-            workspace = os.getenv("MONGODB_WORKSPACE") or os.getenv("WORKSPACE") or "default"
+            workspace = (
+                os.getenv("MONGODB_WORKSPACE") or os.getenv("WORKSPACE") or "default"
+            )
             status_text = f"""## ⚙️ System Status
 
 | Component | Value |
 |-----------|-------|
 | Workspace | `{workspace}` |
-| LLM Provider | **{status.get('llm_provider', 'unknown')}** |
-| LLM Model | `{status.get('llm_model', 'unknown')}` |
-| Embedding | `{status.get('embedding_model', 'unknown')}` |
-| Reranker | `{status.get('rerank_model', 'disabled') or 'disabled'}` |
-| Query Mode | **{cl.user_session.get('mode', 'mix')}** |
-| Database | `{status.get('mongodb_database', 'unknown')}` |
+| LLM Provider | **{status.get("llm_provider", "unknown")}** |
+| LLM Model | `{status.get("llm_model", "unknown")}` |
+| Embedding | `{status.get("embedding_model", "unknown")}` |
+| Reranker | `{status.get("rerank_model", "disabled") or "disabled"}` |
+| Query Mode | **{cl.user_session.get("mode", "mix")}** |
+| Database | `{status.get("mongodb_database", "unknown")}` |
 
 ### 🔧 Enhancements
-- Implicit Expansion: {'✅ Enabled' if status.get('enhancements', {}).get('implicit_expansion') else '❌ Disabled'}
-- Entity Boosting: {'✅ Enabled' if status.get('enhancements', {}).get('entity_boosting') else '❌ Disabled'}
+- Implicit Expansion: {"✅ Enabled" if status.get("enhancements", {}).get("implicit_expansion") else "❌ Disabled"}
+- Entity Boosting: {"✅ Enabled" if status.get("enhancements", {}).get("entity_boosting") else "❌ Disabled"}
 """
             await cl.Message(content=status_text).send()
         except Exception as e:
@@ -1135,7 +1290,9 @@ async def handle_command(text: str, rag):
             # Get full session to access summary
             session = await rag._memory.get_session(session_id)
             if not session:
-                await cl.Message(content="📝 **Conversation Memory**\n\nNo session found.").send()
+                await cl.Message(
+                    content="📝 **Conversation Memory**\n\nNo session found."
+                ).send()
                 return
 
             lines = ["## 📝 Conversation Memory", ""]
@@ -1160,7 +1317,11 @@ async def handle_command(text: str, rag):
                 lines.append("### 💬 Recent Messages")
                 for i, msg in enumerate(session.messages[-10:], 1):  # Show last 10
                     role = "👤 User" if msg["role"] == "user" else "🤖 Assistant"
-                    content = msg["content"][:150] + "..." if len(msg["content"]) > 150 else msg["content"]
+                    content = (
+                        msg["content"][:150] + "..."
+                        if len(msg["content"]) > 150
+                        else msg["content"]
+                    )
                     lines.append(f"**{i}. {role}:** {content}")
                     lines.append("")
             else:
@@ -1175,7 +1336,9 @@ async def handle_command(text: str, rag):
         session_id = cl.user_session.get("session_id")
         if session_id:
             await rag.clear_conversation(session_id)
-            await cl.Message(content="🗑️ Conversation memory cleared for this session.").send()
+            await cl.Message(
+                content="🗑️ Conversation memory cleared for this session."
+            ).send()
         else:
             await cl.Message(content="❌ No session to clear.").send()
 
@@ -1226,12 +1389,15 @@ async def handle_command(text: str, rag):
         await cl.Message(content=help_text).send()
 
     else:
-        await cl.Message(content=f"❓ Unknown command: `{command}`\n\nType `/help` for available commands.").send()
+        await cl.Message(
+            content=f"❓ Unknown command: `{command}`\n\nType `/help` for available commands."
+        ).send()
 
 
 # ============================================================================
 # Query Handler
 # ============================================================================
+
 
 async def handle_query(query: str, rag):
     """Handle a user query with conversation memory."""
@@ -1256,6 +1422,7 @@ async def handle_query(query: str, rag):
             if history_used > 0:
                 # Log that memory was used (for debugging)
                 import logging
+
                 logging.info(f"[CHAINLIT] Query used {history_used} history messages")
         else:
             # Fallback to non-memory query if session_id missing

@@ -172,11 +172,11 @@ class StorageNameSpace(ABC):
     workspace: str
     global_config: dict[str, Any]
 
-    async def initialize(self):
+    async def initialize(self):  # noqa: B027
         """Initialize the storage"""
         pass
 
-    async def finalize(self):
+    async def finalize(self):  # noqa: B027
         """Finalize the storage"""
         pass
 

@@ -625,7 +625,7 @@ def create_app(args):
                 # Use optimized function with pre-processed configuration
                 return create_optimized_openai_llm_func(config_cache, args, llm_timeout)
         except ImportError as e:
-            raise Exception(f"Failed to import {binding} LLM binding: {e}")
+            raise Exception(f"Failed to import {binding} LLM binding: {e}") from e
 
     def create_llm_model_kwargs(binding: str, args, llm_timeout: int) -> dict:
         """
@@ -643,7 +643,7 @@ def create_app(args):
                     "api_key": args.llm_binding_api_key,
                 }
             except ImportError as e:
-                raise Exception(f"Failed to import {binding} options: {e}")
+                raise Exception(f"Failed to import {binding} options: {e}") from e
         return {}
 
     def create_optimized_embedding_function(
@@ -864,7 +864,7 @@ def create_app(args):
                         kwargs["model"] = model
                     return await actual_func(**kwargs)
             except ImportError as e:
-                raise Exception(f"Failed to import {binding} embedding: {e}")
+                raise Exception(f"Failed to import {binding} embedding: {e}") from e
 
         # Step 4: Wrap in EmbeddingFunc and return
         embedding_func_instance = EmbeddingFunc(
@@ -1296,7 +1296,7 @@ def create_app(args):
             }
         except Exception as e:
             logger.error(f"Error getting health status: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     # Custom StaticFiles class for smart caching
     class SmartStaticFiles(StaticFiles):  # Renamed from NoCacheStaticFiles

@@ -375,19 +375,21 @@ class RAGEvaluator:
                 f"   Make sure HybridRAG server is running:\n"
                 f"   python -m hybridrag.engine.api.rag_server\n"
                 f"   Error: {str(e)}"
-            )
+            ) from e
         except httpx.HTTPStatusError as e:
             raise Exception(
                 f"HybridRAG API error {e.response.status_code}: {e.response.text}"
-            )
+            ) from e
         except httpx.ReadTimeout as e:
             raise Exception(
                 f"Request timeout after waiting for response\n"
                 f"   Question: {question[:100]}...\n"
                 f"   Error: {str(e)}"
-            )
+            ) from e
         except Exception as e:
-            raise Exception(f"Error calling HybridRAG API: {type(e).__name__}: {str(e)}")
+            raise Exception(
+                f"Error calling HybridRAG API: {type(e).__name__}: {str(e)}"
+            ) from e
 
     async def evaluate_single_case(
         self,

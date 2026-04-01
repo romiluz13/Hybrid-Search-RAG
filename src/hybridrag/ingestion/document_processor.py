@@ -79,12 +79,12 @@ class DocumentProcessor:
 
                 self._converter = DocumentConverter()
                 logger.info("Docling DocumentConverter initialized")
-            except ImportError:
+            except ImportError as e:
                 logger.error("Docling not installed. Run: pip install docling")
                 raise ImportError(
                     "Docling is required for document processing. "
                     "Install with: pip install docling"
-                )
+                ) from e
         return self._converter
 
     def _get_audio_converter(self) -> Any:
@@ -118,7 +118,7 @@ class DocumentProcessor:
                 raise ImportError(
                     "Audio transcription requires additional dependencies. "
                     "Install with: pip install docling[audio]"
-                )
+                ) from e
         return self._audio_converter
 
     def process_file(self, file_path: str | Path) -> ProcessedDocument:
@@ -242,7 +242,9 @@ class DocumentProcessor:
                 title = file_path.stem
 
             metadata = self._build_metadata(file_path)
-            metadata["pdf_producer"] = doc.metadata.get("producer", "unknown") if doc.metadata else "unknown"
+            metadata["pdf_producer"] = (
+                doc.metadata.get("producer", "unknown") if doc.metadata else "unknown"
+            )
 
             logger.info(f"Successfully processed PDF with PyMuPDF: {file_path.name}")
 
@@ -255,10 +257,10 @@ class DocumentProcessor:
                 format_type="pdf",
             )
 
-        except ImportError:
-            raise ImportError("PyMuPDF (fitz) not installed")
+        except ImportError as e:
+            raise ImportError("PyMuPDF (fitz) not installed") from e
         except Exception as e:
-            raise ValueError(f"Failed to process PDF with PyMuPDF: {e}")
+            raise ValueError(f"Failed to process PDF with PyMuPDF: {e}") from e
 
     def _process_audio(self, file_path: Path) -> ProcessedDocument:
         """
@@ -298,7 +300,7 @@ class DocumentProcessor:
 
         except Exception as e:
             logger.error(f"Audio transcription failed for {file_path}: {e}")
-            raise ValueError(f"Failed to transcribe audio file: {e}")
+            raise ValueError(f"Failed to transcribe audio file: {e}") from e
 
     def _process_text(self, file_path: Path) -> ProcessedDocument:
         """
@@ -333,7 +335,7 @@ class DocumentProcessor:
 
         except Exception as e:
             logger.error(f"Failed to read text file {file_path}: {e}")
-            raise ValueError(f"Failed to read file: {e}")
+            raise ValueError(f"Failed to read file: {e}") from e
 
     def _extract_title(self, content: str, file_path: Path) -> str:
         """

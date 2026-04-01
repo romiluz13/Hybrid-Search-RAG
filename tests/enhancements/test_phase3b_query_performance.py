@@ -97,7 +97,7 @@ class TestM14RedundantIndex:
         # The redundant one would be: create_index(self._session_id_key) by itself on messages
         lines = source.split("\n")
         redundant_found = False
-        for i, line in enumerate(lines):
+        for _i, line in enumerate(lines):
             stripped = line.strip()
             # Look for: messages_collection.create_index(self._session_id_key)
             # But NOT: messages_collection.create_index([(self._session_id_key, ...

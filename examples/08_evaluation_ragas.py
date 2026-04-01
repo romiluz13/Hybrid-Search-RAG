@@ -263,15 +263,6 @@ async def example_custom_metrics():
     print("=" * 60)
 
     try:
-        from ragas.metrics import (
-            answer_correctness,
-            answer_relevancy,
-            answer_similarity,
-            context_precision,
-            context_recall,
-            faithfulness,
-        )
-
         print("\nRAGAS Metrics Overview:\n")
 
         metrics = [

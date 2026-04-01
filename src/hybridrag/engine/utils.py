@@ -939,10 +939,10 @@ def priority_limit_async_func_call(
                         await queue.put(
                             (_priority, current_count, task_id, args, kwargs)
                         )
-                except TimeoutError:
+                except TimeoutError as te:
                     raise QueueFullError(
                         f"{queue_name}: Queue full, timeout after {_queue_timeout} seconds"
-                    )
+                    ) from te
                 except Exception as e:
                     # Clean up on queue error
                     if not future.done():
@@ -955,7 +955,7 @@ def priority_limit_async_func_call(
                         return await asyncio.wait_for(future, _timeout)
                     else:
                         return await future
-                except TimeoutError:
+                except TimeoutError as te:
                     # This is user-level timeout (asyncio.wait_for caused)
                     # Mark cancellation request
                     async with task_states_lock:
@@ -977,13 +977,13 @@ def priority_limit_async_func_call(
 
                     raise TimeoutError(
                         f"{queue_name}: User timeout after {_timeout} seconds"
-                    )
+                    ) from te
                 except WorkerTimeoutError as e:
                     # This is Worker-level timeout, directly propagate exception information
-                    raise TimeoutError(f"{queue_name}: {str(e)}")
+                    raise TimeoutError(f"{queue_name}: {str(e)}") from e
                 except HealthCheckTimeoutError as e:
                     # This is Health Check-level timeout, directly propagate exception information
-                    raise TimeoutError(f"{queue_name}: {str(e)}")
+                    raise TimeoutError(f"{queue_name}: {str(e)}") from e
 
             finally:
                 # Ensure cleanup
@@ -1276,16 +1276,16 @@ class TiktokenTokenizer(Tokenizer):
         """
         try:
             import tiktoken
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
                 "tiktoken is not installed. Please install it with `pip install tiktoken` or define custom `tokenizer_func`."
-            )
+            ) from e
 
         try:
             tokenizer = tiktoken.encoding_for_model(model_name)
             super().__init__(model_name=model_name, tokenizer=tokenizer)
-        except KeyError:
-            raise ValueError(f"Invalid model_name: {model_name}.")
+        except KeyError as ke:
+            raise ValueError(f"Invalid model_name: {model_name}.") from ke
 
 
 def pack_user_ass_to_openai_messages(*args: str):

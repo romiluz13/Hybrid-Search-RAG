@@ -7,7 +7,7 @@ import time
 from contextvars import ContextVar
 from multiprocessing import Manager
 from multiprocessing.synchronize import Lock as ProcessLock
-from typing import Any, Generic, Optional, TypeVar, Union
+from typing import Any, Generic, Optional, TypeVar
 
 from ..exceptions import PipelineNotInitializedError
 
@@ -52,7 +52,7 @@ def direct_log(message, enable_output: bool = True, level: str = "DEBUG"):
 
 
 T = TypeVar("T")
-LockType = Union[ProcessLock, asyncio.Lock]
+LockType = ProcessLock | asyncio.Lock
 
 _is_multiprocess = None
 _workers = None

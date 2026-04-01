@@ -27,7 +27,9 @@ from __future__ import annotations
 
 from typing import Final
 
-MEMORY_SUMMARIZATION_PROMPT: Final[str] = """You are a conversation summarizer. Create a progressive summary of the conversation.
+MEMORY_SUMMARIZATION_PROMPT: Final[
+    str
+] = """You are a conversation summarizer. Create a progressive summary of the conversation.
 
 ## Task
 Update the existing summary with new conversation turns while preserving important context.
@@ -83,7 +85,9 @@ Update the existing summary with new conversation turns while preserving importa
 """
 
 
-MEMORY_SUMMARIZATION_PROMPT_LITE: Final[str] = """Summarize this conversation in 2-3 sentences, preserving the most critical context.
+MEMORY_SUMMARIZATION_PROMPT_LITE: Final[
+    str
+] = """Summarize this conversation in 2-3 sentences, preserving the most critical context.
 
 ## Conversation
 {conversation}
@@ -97,7 +101,9 @@ MEMORY_SUMMARIZATION_PROMPT_LITE: Final[str] = """Summarize this conversation in
 """
 
 
-SESSION_CONTEXT_PROMPT: Final[str] = """Generate a brief context reminder for a returning user.
+SESSION_CONTEXT_PROMPT: Final[
+    str
+] = """Generate a brief context reminder for a returning user.
 
 ## Previous Session Summary
 {session_summary}
@@ -119,7 +125,9 @@ Create a natural, friendly context reminder that:
 """
 
 
-CONVERSATION_COMPRESSION_PROMPT: Final[str] = """Compress this conversation history while preserving essential context.
+CONVERSATION_COMPRESSION_PROMPT: Final[
+    str
+] = """Compress this conversation history while preserving essential context.
 
 ## Conversation History
 {conversation_history}

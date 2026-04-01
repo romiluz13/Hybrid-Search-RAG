@@ -212,7 +212,9 @@ class DoclingHybridChunker:
             else:
                 # Try to end at sentence boundary
                 chunk_end = end
-                for i in range(end, max(start + self.config.min_chunk_size, end - 200), -1):
+                for i in range(
+                    end, max(start + self.config.min_chunk_size, end - 200), -1
+                ):
                     if i < len(content) and content[i] in ".!?\n":
                         chunk_end = i + 1
                         break

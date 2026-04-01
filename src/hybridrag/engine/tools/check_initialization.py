@@ -28,7 +28,9 @@ from hybridrag.engine.base_engine import BaseRAGEngine
 from .base import StoragesStatus
 
 
-async def check_lightrag_setup(rag_instance: BaseRAGEngine, verbose: bool = False) -> bool:
+async def check_lightrag_setup(
+    rag_instance: BaseRAGEngine, verbose: bool = False
+) -> bool:
     """
     Check if a HybridRAG instance is properly initialized.
 
@@ -160,7 +162,9 @@ async def demo():
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Check HybridRAG initialization status")
+    parser = argparse.ArgumentParser(
+        description="Check HybridRAG initialization status"
+    )
     parser.add_argument(
         "--demo", action="store_true", help="Run a demonstration with a test instance"
     )

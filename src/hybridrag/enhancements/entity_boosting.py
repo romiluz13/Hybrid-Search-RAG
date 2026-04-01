@@ -72,12 +72,20 @@ class EntityBoostingReranker:
         Returns:
             Reranked chunks with 'relevance_score', 'entity_boost', 'final_score'
         """
-        logger.info(f"[ENTITY_BOOST] Starting boosted rerank: {len(chunks)} chunks, {len(relevant_entity_ids)} relevant entities, top_n={top_n}")
-        logger.debug(f"[ENTITY_BOOST] Relevant entities: {list(relevant_entity_ids)[:5]}...")
-        logger.debug(f"[ENTITY_BOOST] Query: '{query[:50]}...', boost_weight={self.boost_weight}")
+        logger.info(
+            f"[ENTITY_BOOST] Starting boosted rerank: {len(chunks)} chunks, {len(relevant_entity_ids)} relevant entities, top_n={top_n}"
+        )
+        logger.debug(
+            f"[ENTITY_BOOST] Relevant entities: {list(relevant_entity_ids)[:5]}..."
+        )
+        logger.debug(
+            f"[ENTITY_BOOST] Query: '{query[:50]}...', boost_weight={self.boost_weight}"
+        )
 
         if not chunks:
-            logger.warning("[ENTITY_BOOST] Empty chunks list provided, returning empty list")
+            logger.warning(
+                "[ENTITY_BOOST] Empty chunks list provided, returning empty list"
+            )
             return []
 
         # Extract texts for base reranking
@@ -86,9 +94,15 @@ class EntityBoostingReranker:
 
         # Stage 1: Base cross-encoder reranking
         # Request more than top_n to allow boosting to reorder
-        logger.info(f"[ENTITY_BOOST] Stage 1: Calling base reranker for {min(top_n * 2, len(texts))} results")
-        reranked = await self.base_rerank_func(query, texts, top_n=min(top_n * 2, len(texts)), **kwargs)
-        logger.info(f"[ENTITY_BOOST] Stage 1 complete: got {len(reranked)} reranked results")
+        logger.info(
+            f"[ENTITY_BOOST] Stage 1: Calling base reranker for {min(top_n * 2, len(texts))} results"
+        )
+        reranked = await self.base_rerank_func(
+            query, texts, top_n=min(top_n * 2, len(texts)), **kwargs
+        )
+        logger.info(
+            f"[ENTITY_BOOST] Stage 1 complete: got {len(reranked)} reranked results"
+        )
 
         # Map back to chunks with metadata
         result: list[dict[str, Any]] = []
@@ -102,7 +116,9 @@ class EntityBoostingReranker:
 
             # Stage 2: Calculate entity boost using TEXT-BASED matching
             chunk_text = texts[idx]
-            found_entities = self._find_entities_in_text(chunk_text, relevant_entity_ids)
+            found_entities = self._find_entities_in_text(
+                chunk_text, relevant_entity_ids
+            )
             entities_found_in_any_chunk.update(found_entities)
             overlap = len(found_entities)
 
@@ -114,7 +130,9 @@ class EntityBoostingReranker:
 
             if boost > 0:
                 total_boost_applied += 1
-                logger.debug(f"[ENTITY_BOOST] Chunk {idx}: found {overlap} entities ({found_entities}), boost={boost:.4f}")
+                logger.debug(
+                    f"[ENTITY_BOOST] Chunk {idx}: found {overlap} entities ({found_entities}), boost={boost:.4f}"
+                )
 
             chunk["entity_overlap"] = overlap
             chunk["entities_found"] = list(found_entities)
@@ -125,10 +143,16 @@ class EntityBoostingReranker:
         # Re-sort by final score
         result.sort(key=lambda x: x["final_score"], reverse=True)
 
-        logger.info(f"[ENTITY_BOOST] Stage 2 complete: {total_boost_applied}/{len(result)} chunks received boost")
-        logger.info(f"[ENTITY_BOOST] Entities found across all chunks: {entities_found_in_any_chunk}")
+        logger.info(
+            f"[ENTITY_BOOST] Stage 2 complete: {total_boost_applied}/{len(result)} chunks received boost"
+        )
+        logger.info(
+            f"[ENTITY_BOOST] Entities found across all chunks: {entities_found_in_any_chunk}"
+        )
         if result:
-            logger.info(f"[ENTITY_BOOST] Top result: final_score={result[0]['final_score']:.4f} (relevance={result[0]['relevance_score']:.4f}, boost={result[0]['entity_boost']:.4f})")
+            logger.info(
+                f"[ENTITY_BOOST] Top result: final_score={result[0]['final_score']:.4f} (relevance={result[0]['relevance_score']:.4f}, boost={result[0]['entity_boost']:.4f})"
+            )
 
         return result[:top_n]
 
@@ -147,7 +171,9 @@ class EntityBoostingReranker:
         - List of strings (basic reranking)
         - List of dicts with 'content' and 'entity_ids' (boosted reranking)
         """
-        logger.info(f"[ENTITY_BOOST] __call__ invoked: {len(documents)} documents, top_n={top_n}, has_entity_ids={relevant_entity_ids is not None}")
+        logger.info(
+            f"[ENTITY_BOOST] __call__ invoked: {len(documents)} documents, top_n={top_n}, has_entity_ids={relevant_entity_ids is not None}"
+        )
 
         # Convert strings to dicts if needed
         if documents and isinstance(documents[0], str):
@@ -158,11 +184,17 @@ class EntityBoostingReranker:
 
         # If no entity IDs provided, use base reranking
         if not relevant_entity_ids:
-            logger.info("[ENTITY_BOOST] No entity IDs provided, falling back to base reranker")
+            logger.info(
+                "[ENTITY_BOOST] No entity IDs provided, falling back to base reranker"
+            )
             texts = [c.get("content") or c.get("text", "") for c in chunks]
             try:
-                result = await self.base_rerank_func(query, texts, top_n=top_n, **kwargs)
-                logger.info(f"[ENTITY_BOOST] Base reranker returned {len(result)} results")
+                result = await self.base_rerank_func(
+                    query, texts, top_n=top_n, **kwargs
+                )
+                logger.info(
+                    f"[ENTITY_BOOST] Base reranker returned {len(result)} results"
+                )
                 return result
             except Exception as e:
                 logger.error(f"[ENTITY_BOOST] Base reranker error: {e}")
@@ -191,7 +223,9 @@ def create_boosted_rerank_func(
     Returns:
         Async rerank function with entity boosting
     """
-    logger.info(f"[ENTITY_BOOST] Creating boosted reranker with boost_weight={boost_weight}")
+    logger.info(
+        f"[ENTITY_BOOST] Creating boosted reranker with boost_weight={boost_weight}"
+    )
     reranker = EntityBoostingReranker(
         base_rerank_func=base_rerank_func,
         boost_weight=boost_weight,
