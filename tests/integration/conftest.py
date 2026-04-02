@@ -22,7 +22,7 @@ def _grove_llm_overrides() -> dict:
     Returns empty dict if GROVE_API_KEY is not set, allowing tests to fall
     back to enable_llm=False (retrieval-only mode).
     """
-    grove_key = os.getenv("GROVE_API_KEY") or os.getenv("API_KEY")
+    grove_key = os.getenv("GROVE_API_KEY")
     if not grove_key:
         return {"enable_llm": False}
 
