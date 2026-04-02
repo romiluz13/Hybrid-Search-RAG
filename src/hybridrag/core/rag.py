@@ -12,6 +12,7 @@ This is the main RAG engine providing:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from collections.abc import Callable, Sequence
@@ -69,6 +70,86 @@ if TYPE_CHECKING:
 logger = logging.getLogger("hybridrag.core")
 
 
+def _build_inline_file_paths(
+    documents: Sequence[str], ids: Sequence[str] | None = None
+) -> list[str]:
+    """Create stable synthetic sources for inline text inserts.
+
+    Raw string ingestion should still produce meaningful citations instead of
+    collapsing to ``unknown_source`` inside the engine. When the caller does not
+    provide file paths, we derive a deterministic inline source per document.
+    """
+    inline_paths: list[str] = []
+    for index, document in enumerate(documents):
+        stable_id = ids[index] if ids and index < len(ids) else None
+        if not stable_id:
+            stable_id = hashlib.md5(document.encode("utf-8")).hexdigest()[:12]
+        inline_paths.append(f"inline://{stable_id}")
+    return inline_paths
+
+
+def _extract_references_from_query_data(query_data: dict[str, Any]) -> list[dict[str, str]]:
+    """Return references from structured query data, synthesizing them when needed."""
+    data = query_data.get("data", {})
+    references = list(data.get("references", []))
+    if references:
+        return references
+
+    synthesized: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _remember_reference(reference_id: Any, file_path: Any) -> None:
+        ref_id = str(reference_id or "").strip()
+        if not ref_id or ref_id in seen:
+            return
+        seen.add(ref_id)
+        synthesized.append(
+            {
+                "reference_id": ref_id,
+                "file_path": str(file_path or "unknown_source"),
+            }
+        )
+
+    for chunk in data.get("chunks", []):
+        _remember_reference(
+            chunk.get("reference_id") or chunk.get("chunk_id"),
+            chunk.get("file_path"),
+        )
+
+    if synthesized:
+        return synthesized
+
+    for entity in data.get("entities", []):
+        _remember_reference(
+            entity.get("reference_id")
+            or entity.get("source_id")
+            or entity.get("entity_name"),
+            entity.get("file_path"),
+        )
+
+    for relationship in data.get("relationships", []):
+        _remember_reference(
+            relationship.get("reference_id")
+            or relationship.get("source_id")
+            or f"{relationship.get('src_id', '')}->{relationship.get('tgt_id', '')}",
+            relationship.get("file_path"),
+        )
+
+    return synthesized
+
+
+def _query_data_has_retrieval_content(query_data: dict[str, Any]) -> bool:
+    """Return True when structured query data contains usable retrieval output."""
+    data = query_data.get("data", {})
+    if data.get("chunks") or data.get("entities") or data.get("relationships"):
+        return True
+
+    context = query_data.get("llm_response", {}).get("content") or query_data.get(
+        "context", ""
+    )
+    return "[no-context]" not in context.lower()
+
+
 def _create_embedding_func(
     settings: Settings,
 ) -> tuple[Callable[[list[str]], np.ndarray], int]:
@@ -94,12 +175,12 @@ def _create_embedding_func(
 def _create_llm_func(settings: Settings) -> Callable[..., str]:
     """Create LLM function based on provider setting."""
     if not settings.enable_llm:
+        from ..engine.prompt import PROMPTS
+
+        completion_delimiter = PROMPTS["DEFAULT_COMPLETION_DELIMITER"]
 
         async def _llm_disabled(*args, **kwargs) -> str:
-            raise RuntimeError(
-                "LLM generation is disabled. Enable settings.enable_llm or "
-                "use retrieval-only flows such as query(..., only_context=True)."
-            )
+            return completion_delimiter
 
         logger.info("[INIT] LLM generation disabled by settings.enable_llm=False")
         return _llm_disabled
@@ -445,8 +526,10 @@ class HybridRAG:
         total_chars = sum(len(d) for d in documents)
         logger.info("[INSERT] ========== Starting Document Insertion ==========")
         logger.info(f"[INSERT] Documents: {doc_count}, Total chars: {total_chars:,}")
-        if file_paths:
-            logger.info(f"[INSERT] File paths: {file_paths}")
+        resolved_file_paths = list(file_paths) if file_paths else _build_inline_file_paths(
+            documents, ids
+        )
+        logger.info(f"[INSERT] File paths: {resolved_file_paths}")
 
         import time as _time
 
@@ -456,7 +539,7 @@ class HybridRAG:
             await rag.ainsert(
                 input=list(documents),
                 ids=list(ids) if ids else None,
-                file_paths=list(file_paths) if file_paths else None,
+                file_paths=resolved_file_paths,
             )
             duration = _time.time() - start_time
             logger.info("[INSERT] ========== Document Insertion Complete ==========")
@@ -464,7 +547,7 @@ class HybridRAG:
             # Log to Langfuse if enabled
             if langfuse_enabled():
                 log_ingestion(
-                    file_name=file_paths[0] if file_paths else "unknown",
+                    file_name=resolved_file_paths[0] if resolved_file_paths else "unknown",
                     num_chunks=doc_count,
                     num_entities=0,  # Not tracked at this level
                     num_relations=0,  # Not tracked at this level
@@ -1352,6 +1435,35 @@ class HybridRAG:
         )
 
         try:
+            if only_context:
+                result = await self.query_data(
+                    query=expanded_query,
+                    mode=resolved_mode,
+                    top_k=resolved_top_k,
+                    rerank_top_k=resolved_rerank_top_k,
+                    enable_rerank=resolved_enable_rerank,
+                )
+                context = result.get("context", "")
+                logger.info(f"[QUERY] Response received: {len(context)} chars")
+                logger.info("[QUERY] ========== Query Complete ==========")
+                return context
+
+            if not self.settings.enable_llm:
+                logger.info(
+                    "[QUERY] LLM disabled, returning retrieved context instead of generation"
+                )
+                result = await self.query_data(
+                    query=expanded_query,
+                    mode=resolved_mode,
+                    top_k=resolved_top_k,
+                    rerank_top_k=resolved_rerank_top_k,
+                    enable_rerank=resolved_enable_rerank,
+                )
+                context = result.get("context", "")
+                logger.info(f"[QUERY] Response received: {len(context)} chars")
+                logger.info("[QUERY] ========== Query Complete ==========")
+                return context
+
             logger.info("[QUERY] Executing query...")
             response = await rag.aquery(
                 query=expanded_query,
@@ -1373,6 +1485,56 @@ class HybridRAG:
         except Exception as e:
             logger.error(f"[QUERY] Error during query: {e}")
             raise
+
+    async def query_data(
+        self,
+        query: str,
+        mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"]
+        | None = None,
+        top_k: int | None = None,
+        rerank_top_k: int | None = None,
+        enable_rerank: bool | None = None,
+    ) -> dict[str, Any]:
+        """Return structured retrieval data and the assembled context string."""
+        rag = self._ensure_initialized()
+
+        resolved_mode = mode or self.settings.default_query_mode
+        resolved_top_k = top_k or self.settings.default_top_k
+        resolved_rerank_top_k = rerank_top_k or self.settings.default_rerank_top_k
+        resolved_enable_rerank = (
+            enable_rerank if enable_rerank is not None else self.settings.enable_rerank
+        )
+
+        param = QueryParam(
+            mode=resolved_mode,
+            top_k=resolved_top_k,
+            chunk_top_k=resolved_rerank_top_k,
+            enable_rerank=resolved_enable_rerank,
+            only_need_context=True,
+        )
+
+        result = await rag.aquery_llm(query=query, param=param._to_internal())
+        if (
+            not self.settings.enable_llm
+            and resolved_mode in {"local", "global", "hybrid"}
+            and not _query_data_has_retrieval_content(result)
+        ):
+            logger.info(
+                "[QUERY_DATA] Retrieval-only mode produced no KG context for "
+                f"mode={resolved_mode}; retrying with mode=mix"
+            )
+            fallback_param = QueryParam(
+                mode="mix",
+                top_k=resolved_top_k,
+                chunk_top_k=resolved_rerank_top_k,
+                enable_rerank=resolved_enable_rerank,
+                only_need_context=True,
+            )
+            result = await rag.aquery_llm(query=query, param=fallback_param._to_internal())
+
+        data = dict(result)
+        data["context"] = result.get("llm_response", {}).get("content") or ""
+        return data
 
     async def query_with_sources(
         self,
@@ -1402,16 +1564,18 @@ class HybridRAG:
             f"[QUERY_WITH_SOURCES] Starting query with sources: mode={resolved_mode}"
         )
 
-        # Step 1: Get context (single retrieval)
-        logger.info("[QUERY_WITH_SOURCES] Step 1: Fetching context...")
-        context = await self.query(
+        # Step 1: Get context and structured retrieval data (single retrieval)
+        logger.info("[QUERY_WITH_SOURCES] Step 1: Fetching context and references...")
+        structured = await self.query_data(
             query=query,
             mode=mode,
             top_k=top_k,
-            only_context=True,
         )
+        context = structured.get("context", "")
         context_len = len(context) if context else 0
         logger.info(f"[QUERY_WITH_SOURCES] Context retrieved: {context_len} chars")
+        references = _extract_references_from_query_data(structured)
+        metadata = structured.get("metadata", {})
 
         # Step 2: Generate response using LLM directly (no second retrieval)
         logger.info("[QUERY_WITH_SOURCES] Step 2: Generating response from context...")
@@ -1459,6 +1623,8 @@ Please provide a comprehensive answer based only on the information provided in 
             "context": context,
             "query": query,
             "mode": resolved_mode,
+            "references": references,
+            "metadata": metadata,
         }
 
     async def query_with_memory(

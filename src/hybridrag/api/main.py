@@ -212,7 +212,7 @@ def register_routes(app: FastAPI) -> None:
         rag = get_rag()
 
         try:
-            if request.include_context:
+            if request.include_context or request.include_references:
                 result = await rag.query_with_sources(
                     query=request.query,
                     mode=request.mode,
@@ -220,11 +220,17 @@ def register_routes(app: FastAPI) -> None:
                 )
                 return QueryResponse(
                     answer=result["answer"],
-                    context=result["context"],
+                    context=result["context"] if request.include_context else None,
+                    references=(
+                        result.get("references", [])
+                        if request.include_references
+                        else []
+                    ),
                     metadata={
                         "mode": result["mode"],
                         "top_k": request.top_k,
                         "rerank_top_k": request.rerank_top_k,
+                        **result.get("metadata", {}),
                     },
                 )
             else:
@@ -237,6 +243,7 @@ def register_routes(app: FastAPI) -> None:
                 )
                 return QueryResponse(
                     answer=answer,
+                    references=[],
                     metadata={
                         "mode": request.mode,
                         "top_k": request.top_k,

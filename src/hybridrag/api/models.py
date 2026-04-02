@@ -71,6 +71,10 @@ class QueryRequest(BaseModel):
         default=False,
         description="Include source context in response",
     )
+    include_references: bool = Field(
+        default=False,
+        description="Include structured source references in response",
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -89,6 +93,7 @@ class QueryResponse(BaseModel):
 
     answer: str
     context: str | None = None
+    references: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

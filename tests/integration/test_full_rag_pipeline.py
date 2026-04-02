@@ -50,6 +50,9 @@ async def test_query_with_sources_returns_context(rag, test_documents):
     assert isinstance(result["answer"], str), "Should return an answer"
     assert len(result["answer"]) > 0, "Answer should not be empty"
     assert isinstance(result["context"], str), "Should return source context"
+    assert isinstance(result["references"], list), "Should expose structured references"
+    assert len(result["references"]) > 0, "Should include at least one source reference"
+    assert isinstance(result["metadata"], dict), "Should expose retrieval metadata"
     assert (
         "vector" in result["answer"].lower() or "search" in result["answer"].lower()
     ), "Answer should be relevant to the query"
