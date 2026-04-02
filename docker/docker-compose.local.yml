@@ -1,5 +1,7 @@
 # Docker Compose for Local MongoDB Atlas Development
-# Usage: docker-compose -f docker/docker-compose.local.yml up
+# Uses mongodb-atlas-local image which provides Atlas Search + Vector Search locally.
+# NOTE: atlas-local ignores MONGODB_INITDB_ROOT_* env vars -- it runs without auth.
+# Usage: docker-compose -f docker/docker-compose.local.yml up -d
 
 version: '3.8'
 
@@ -11,8 +13,6 @@ services:
     ports:
       - "127.0.0.1:27017:27017"
     environment:
-      # NOTE: mongodb/mongodb-atlas-local image ignores MONGODB_INITDB_ROOT_*
-      # Auth is not enforced in local development. For production, use Atlas.
       - MONGODB_INITDB_DATABASE=hybridrag
     volumes:
       - mongodb-data:/data/db
@@ -36,9 +36,9 @@ networks:
   hybridrag-network:
     driver: bridge
 
-# Connection URI for .env (atlas-local uses no auth):
+# Connection URI for .env:
 # MONGODB_URI=mongodb://localhost:27017/?directConnection=true
-
+#
 # Quick Commands:
 # Start:    docker-compose -f docker/docker-compose.local.yml up -d
 # Stop:     docker-compose -f docker/docker-compose.local.yml down

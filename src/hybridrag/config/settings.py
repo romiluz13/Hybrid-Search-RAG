@@ -171,6 +171,11 @@ class Settings(BaseSettings):
         default="gemini",
         description="LLM provider to use (anthropic, openai, gemini)",
     )
+    enable_llm: bool = Field(
+        default=True,
+        description="Enable LLM generation. Set to False for retrieval-only workflows "
+        "that still need embeddings, ingestion, and context retrieval.",
+    )
 
     # Anthropic (Claude)
     anthropic_api_key: SecretStr | None = Field(
@@ -190,6 +195,14 @@ class Settings(BaseSettings):
     openai_model: str = Field(
         default="gpt-4o",
         description="OpenAI model (gpt-4o, gpt-4-turbo, gpt-3.5-turbo)",
+    )
+    openai_base_url: str | None = Field(
+        default=None,
+        description="Custom OpenAI-compatible API endpoint (for Azure/gateway proxies)",
+    )
+    openai_extra_headers: str | None = Field(
+        default=None,
+        description='Extra headers as JSON string, e.g. \'{"api-key": "..."}\' for Azure gateways',
     )
     openai_embedding_model: str = Field(
         default="text-embedding-3-large",

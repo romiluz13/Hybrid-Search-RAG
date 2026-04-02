@@ -17,7 +17,7 @@ from pymongo import (
 )
 from pymongo.asynchronous.collection import AsyncCollection  # type: ignore
 from pymongo.asynchronous.database import AsyncDatabase  # type: ignore
-from pymongo.errors import PyMongoError  # type: ignore
+from pymongo.errors import OperationFailure, PyMongoError  # type: ignore
 from pymongo.operations import SearchIndexModel  # type: ignore
 
 from ..base import (
@@ -65,7 +65,14 @@ MONGO_AGGREGATE_TIMEOUT_MS = int(os.getenv("MONGO_AGGREGATE_TIMEOUT_MS", "30000"
 
 class ClientManager:
     _instances: dict = {"db": None, "client": None, "ref_count": 0}
-    _lock = asyncio.Lock()
+    _lock: asyncio.Lock | None = None
+
+    @classmethod
+    def _get_lock(cls) -> asyncio.Lock:
+        """Lazily create lock in the current event loop to avoid cross-loop binding."""
+        if cls._lock is None:
+            cls._lock = asyncio.Lock()
+        return cls._lock
 
     @classmethod
     async def get_client(
@@ -84,7 +91,7 @@ class ClientManager:
         Returns:
             AsyncDatabase handle.
         """
-        async with cls._lock:
+        async with cls._get_lock():
             if cls._instances["db"] is None:
                 # Prefer passed uri, fall back to env var for backward compat
                 resolved_uri = uri or os.environ.get("MONGO_URI")
@@ -107,15 +114,26 @@ class ClientManager:
     @classmethod
     async def release_client(cls, db: AsyncDatabase) -> None:
         """Release a database reference. Closes client when ref_count reaches 0."""
-        async with cls._lock:
+        async with cls._get_lock():
             if db is not None:
                 if db is cls._instances["db"]:
                     cls._instances["ref_count"] -= 1
                     if cls._instances["ref_count"] == 0:
                         if cls._instances.get("client"):
-                            cls._instances["client"].close()
+                            await cls._instances["client"].close()
                             cls._instances["client"] = None
                         cls._instances["db"] = None
+
+    @classmethod
+    async def reset(cls) -> None:
+        """Force-close and reset all state. Use between tests to avoid event loop issues."""
+        if cls._instances.get("client"):
+            try:
+                await cls._instances["client"].close()
+            except Exception:
+                pass  # Best-effort close during reset
+        cls._instances = {"db": None, "client": None, "ref_count": 0}
+        cls._lock = None  # Force new lock in next event loop
 
 
 @final
@@ -2358,7 +2376,21 @@ class MongoVectorDBStorage(BaseVectorStorage):
                 type="vectorSearch",
             )
 
-            await self._data.create_search_index(search_index_model)
+            try:
+                await self._data.create_search_index(search_index_model)
+            except OperationFailure as ns_err:
+                if (
+                    ns_err.code == 26
+                ):  # NamespaceNotFound — collection doesn't exist yet
+                    logger.info(
+                        f"[{self.workspace}] Collection does not exist yet for "
+                        f"{self._index_name}, creating it first..."
+                    )
+                    db = self._data.database
+                    await db.create_collection(self._data.name)
+                    await self._data.create_search_index(search_index_model)
+                else:
+                    raise
             logger.info(
                 f"[{self.workspace}] Vector index {self._index_name} created successfully."
             )

@@ -250,15 +250,54 @@ class ConversationMemory:
         # Create indexes on sessions collection
         await self._sessions_collection.create_index(self._session_id_key, unique=True)
         await self._sessions_collection.create_index("created_at")
-        await self._sessions_collection.create_index("updated_at")
 
         # M15: TTL index for automatic session cleanup (90 days)
         # [Rule: mongodb-schema-design] TTL indexes automatically remove stale documents
-        await self._sessions_collection.create_index(
-            "updated_at",
-            expireAfterSeconds=7776000,  # 60 * 60 * 24 * 90 = 90 days
-            name="session_ttl",
+        updated_at_key = {"updated_at": 1}
+        session_indexes_cursor = await self._sessions_collection.list_indexes()
+        session_indexes = await session_indexes_cursor.to_list(length=None)
+        updated_at_index = next(
+            (
+                index
+                for index in session_indexes
+                if dict(index.get("key", {})) == updated_at_key
+            ),
+            None,
         )
+
+        if updated_at_index is None:
+            await self._sessions_collection.create_index(
+                "updated_at",
+                expireAfterSeconds=7776000,  # 60 * 60 * 24 * 90 = 90 days
+                name="session_ttl",
+            )
+        elif int(updated_at_index.get("expireAfterSeconds", 0)) != 7776000:
+            try:
+                await self._db.command(
+                    {
+                        "collMod": self._sessions_collection_name,
+                        "index": {
+                            "keyPattern": updated_at_key,
+                            "expireAfterSeconds": 7776000,
+                        },
+                    }
+                )
+            except Exception as exc:
+                # collMod fails if the existing index is not a TTL index.
+                # Drop the plain index and recreate as TTL.
+                logger.warning(
+                    "[MEMORY] collMod failed for updated_at TTL (%s); "
+                    "dropping and recreating as TTL index",
+                    exc,
+                )
+                await self._sessions_collection.drop_index(
+                    updated_at_index.get("name", "updated_at_1")
+                )
+                await self._sessions_collection.create_index(
+                    "updated_at",
+                    expireAfterSeconds=7776000,
+                    name="session_ttl",
+                )
 
         # Create indexes on messages collection (Rule 1.1 compliant)
         # NOTE: Single-field session_id_key index removed (M14) -- the compound indexes
@@ -926,7 +965,7 @@ class ConversationMemory:
             },
         ]
 
-        cursor = self._sessions_collection.aggregate(pipeline, maxTimeMS=30000)
+        cursor = await self._sessions_collection.aggregate(pipeline, maxTimeMS=30000)
 
         sessions = []
         async for doc in cursor:
@@ -953,7 +992,7 @@ class ConversationMemory:
         we do NOT close it -- the caller manages its lifecycle.
         """
         if self._client and self._owns_client:
-            self._client.close()
+            await self._client.close()
             logger.info("[MEMORY] ConversationMemory closed (own client)")
         self._client = None
         self._db = None

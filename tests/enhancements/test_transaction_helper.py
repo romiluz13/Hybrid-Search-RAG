@@ -29,7 +29,7 @@ class TestRunWithTransaction:
         mock_session.with_transaction = AsyncMock(
             side_effect=OperationFailure("transaction numbers are not allowed")
         )
-        mock_client.start_session = AsyncMock(return_value=mock_session)
+        mock_client.start_session = MagicMock(return_value=mock_session)
 
         result = await run_with_transaction(
             mock_client,
@@ -54,7 +54,7 @@ class TestRunWithTransaction:
         mock_session.with_transaction = AsyncMock(
             side_effect=OperationFailure("transaction numbers are not allowed")
         )
-        mock_client.start_session = AsyncMock(return_value=mock_session)
+        mock_client.start_session = MagicMock(return_value=mock_session)
 
         with pytest.raises(OperationFailure, match="transaction numbers"):
             await run_with_transaction(
@@ -77,7 +77,7 @@ class TestRunWithTransaction:
         mock_session.with_transaction = AsyncMock(
             side_effect=OperationFailure("some other error")
         )
-        mock_client.start_session = AsyncMock(return_value=mock_session)
+        mock_client.start_session = MagicMock(return_value=mock_session)
 
         with pytest.raises(OperationFailure, match="some other error"):
             await run_with_transaction(
@@ -103,7 +103,7 @@ class TestRunWithTransaction:
         mock_session.with_transaction = AsyncMock(
             side_effect=ConnectionFailure("transactions are not supported")
         )
-        mock_client.start_session = AsyncMock(return_value=mock_session)
+        mock_client.start_session = MagicMock(return_value=mock_session)
 
         result = await run_with_transaction(mock_client, my_callback)
 
@@ -129,7 +129,7 @@ class TestRunWithTransaction:
         mock_session.with_transaction = AsyncMock(
             side_effect=ValueError("unexpected non-pymongo error")
         )
-        mock_client.start_session = AsyncMock(return_value=mock_session)
+        mock_client.start_session = MagicMock(return_value=mock_session)
 
         with pytest.raises(ValueError, match="unexpected non-pymongo error"):
             await run_with_transaction(
@@ -155,7 +155,7 @@ class TestRunWithTransaction:
         # Error code 263 = OperationNotSupportedInTransaction
         error = OperationFailure("not supported", code=263)
         mock_session.with_transaction = AsyncMock(side_effect=error)
-        mock_client.start_session = AsyncMock(return_value=mock_session)
+        mock_client.start_session = MagicMock(return_value=mock_session)
 
         result = await run_with_transaction(
             mock_client,

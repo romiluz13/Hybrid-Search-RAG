@@ -24,14 +24,21 @@ class OpenAILLM:
     OpenAI LLM wrapper.
 
     Provides async generation for HybridRAG.
+    Supports custom base_url and headers for Azure/gateway endpoints.
     """
 
     api_key: str
     model: str = "gpt-4o"
     max_tokens: int = 4096
+    base_url: str | None = None
+    default_headers: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
-        self._client = AsyncOpenAI(api_key=self.api_key)
+        self._client = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            default_headers=self.default_headers,
+        )
 
     async def generate_async(
         self,
@@ -57,7 +64,7 @@ class OpenAILLM:
 
         response = await self._client.chat.completions.create(
             model=self.model,
-            max_tokens=kwargs.get("max_tokens", self.max_tokens),
+            max_completion_tokens=kwargs.get("max_tokens", self.max_tokens),
             messages=messages,
         )
 
@@ -123,6 +130,8 @@ def create_openai_llm_func(
     api_key: str,
     model: str = "gpt-4o",
     max_tokens: int = 4096,
+    base_url: str | None = None,
+    default_headers: dict[str, str] | None = None,
 ) -> Callable[..., str]:
     """
     Create LLM function using OpenAI.
@@ -131,11 +140,19 @@ def create_openai_llm_func(
         api_key: OpenAI API key
         model: Model name (gpt-4o, gpt-4-turbo, gpt-3.5-turbo)
         max_tokens: Maximum tokens for generation
+        base_url: Custom API endpoint (for Azure/gateway proxies)
+        default_headers: Extra headers (e.g. {"api-key": "..."} for Azure)
 
     Returns:
         Async LLM function
     """
-    llm = OpenAILLM(api_key=api_key, model=model, max_tokens=max_tokens)
+    llm = OpenAILLM(
+        api_key=api_key,
+        model=model,
+        max_tokens=max_tokens,
+        base_url=base_url,
+        default_headers=default_headers,
+    )
 
     async def llm_func(
         prompt: str,

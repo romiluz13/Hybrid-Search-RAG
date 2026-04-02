@@ -1,14 +1,26 @@
 """Tests for mix mode search module."""
 
+from datetime import UTC, datetime
+from typing import NamedTuple
+
 import pytest
 
 from hybridrag.enhancements.graph_search import GraphTraversalConfig
 from hybridrag.enhancements.mix_mode_search import (
     MixModeConfig,
+    MixModeSearcher,
     MixModeSearchResult,
     extract_pipeline_score,
+    mix_mode_search,
 )
 from hybridrag.enhancements.mongodb_hybrid_search import MongoDBHybridSearchConfig
+
+
+class SeededMixModeDB(NamedTuple):
+    """Typed fixture return for seeded mix mode database."""
+
+    db: object  # AsyncDatabase
+    chunk_ids: list[str]
 
 
 class TestMixModeConfig:
@@ -166,27 +178,163 @@ class TestExtractPipelineScore:
 
 
 class TestMixModeSearchIntegration:
-    """Integration tests (require MongoDB connection).
+    """MongoDB-backed integration tests for mix mode behavior."""
 
-    L22: Removed empty stub bodies with pass statements.
-    TODO: Implement when MongoDB integration test infrastructure is available.
-    Tracked stubs:
-    - test_mix_mode_search_execution: Full search pipeline with real DB
-    - test_mix_mode_searcher_class: MixModeSearcher initialization + query
-    - test_graph_only_search: Graph-only mode with real graph data
-    """
+    @pytest.fixture
+    async def seeded_mix_mode_db(self, mongodb_test_db):
+        """Seed graph edges and chunk data for mix mode tests."""
+        now = datetime.now(UTC)
+        insert_result = await mongodb_test_db["text_chunks"].insert_many(
+            [
+                {
+                    "document_id": "doc-graph-1",
+                    "content": "Atlas powers Vector Search for HybridRAG.",
+                    "entities": [
+                        {"name": "Atlas"},
+                        {"name": "Vector Search"},
+                    ],
+                    "timestamp": now,
+                    "metadata": {"source": "graph-doc"},
+                },
+                {
+                    "document_id": "doc-graph-2",
+                    "content": "MongoDB Atlas uses search indexes for retrieval.",
+                    "entities": [
+                        {"name": "MongoDB"},
+                        {"name": "Atlas"},
+                    ],
+                    "timestamp": now,
+                    "metadata": {"source": "platform-doc"},
+                },
+            ]
+        )
+        await mongodb_test_db["kg_edges"].insert_many(
+            [
+                {
+                    "source_node_id": "mongodb",
+                    "target_node_id": "atlas",
+                    "relationship_type": "platform_for",
+                    "weight": 0.95,
+                },
+                {
+                    "source_node_id": "atlas",
+                    "target_node_id": "vector search",
+                    "relationship_type": "supports",
+                    "weight": 0.90,
+                },
+            ]
+        )
 
-    @pytest.mark.skip(reason="Requires MongoDB connection - TODO: implement")
-    async def test_mix_mode_search_execution(self) -> None:
-        """Test actual mix mode search execution with MongoDB."""
+        return SeededMixModeDB(
+            db=mongodb_test_db,
+            chunk_ids=[str(chunk_id) for chunk_id in insert_result.inserted_ids],
+        )
 
-    @pytest.mark.skip(reason="Requires MongoDB connection - TODO: implement")
-    async def test_mix_mode_searcher_class(self) -> None:
-        """Test MixModeSearcher class initialization and query."""
+    @pytest.mark.asyncio
+    async def test_mix_mode_search_execution(self, seeded_mix_mode_db, monkeypatch):
+        """Test mix mode merges hybrid and graph-derived results."""
+        chunk_id = seeded_mix_mode_db.chunk_ids[0]
 
-    @pytest.mark.skip(reason="Requires MongoDB connection - TODO: implement")
-    async def test_graph_only_search(self) -> None:
+        async def fake_hybrid_search_with_rank_fusion(*args, **kwargs):
+            return [
+                {
+                    "chunk_id": chunk_id,
+                    "document_id": "doc-hybrid-1",
+                    "content": "Hybrid result about Atlas and Vector Search.",
+                    "score": 0.82,
+                    "metadata": {"source": "hybrid"},
+                    "search_type": "hybrid_rrf",
+                    "score_details": {
+                        "details": [
+                            {"inputPipelineName": "vector", "value": 0.91},
+                            {"inputPipelineName": "text", "value": 0.73},
+                        ]
+                    },
+                }
+            ]
+
+        import sys
+
+        _mix_mod = sys.modules["hybridrag.enhancements.mix_mode_search"]
+        monkeypatch.setattr(
+            _mix_mod,
+            "hybrid_search_with_rank_fusion",
+            fake_hybrid_search_with_rank_fusion,
+        )
+
+        results = await mix_mode_search(
+            db=seeded_mix_mode_db.db,
+            query="How does MongoDB Atlas support vector search?",
+            query_vector=[0.1, 0.2, 0.3],
+            top_k=5,
+            config=MixModeConfig(
+                graph_config=GraphTraversalConfig(max_depth=2, max_nodes=10)
+            ),
+            query_entities=["MongoDB"],
+        )
+
+        assert results
+        primary = results[0]
+        assert primary.chunk_id == chunk_id
+        assert primary.source_scores["vector"] == pytest.approx(0.91)
+        assert primary.source_scores["text"] == pytest.approx(0.73)
+        # entity_only_weight from MixModeConfig default = 0.5
+        assert primary.source_scores["entity"] == pytest.approx(0.5)
+        assert primary.entity_boost == pytest.approx(0.1)
+        assert "atlas" in primary.graph_entities
+
+    @pytest.mark.asyncio
+    async def test_mix_mode_searcher_class(self, seeded_mix_mode_db, monkeypatch):
+        """Test MixModeSearcher initialization and query."""
+
+        async def fake_hybrid_search_with_rank_fusion(*args, **kwargs):
+            return []
+
+        import sys
+
+        _mix_mod = sys.modules["hybridrag.enhancements.mix_mode_search"]
+        monkeypatch.setattr(
+            _mix_mod,
+            "hybrid_search_with_rank_fusion",
+            fake_hybrid_search_with_rank_fusion,
+        )
+
+        searcher = MixModeSearcher(
+            db=seeded_mix_mode_db.db,
+            config=MixModeConfig(
+                graph_config=GraphTraversalConfig(max_depth=2, max_nodes=10)
+            ),
+        )
+
+        results = await searcher.search(
+            query="Atlas graph search",
+            query_vector=[0.4, 0.5, 0.6],
+            top_k=5,
+            query_entities=["MongoDB"],
+        )
+
+        assert results
+        assert all(isinstance(result, MixModeSearchResult) for result in results)
+        assert results[0].search_type == "entity_only"
+
+    @pytest.mark.asyncio
+    async def test_graph_only_search(self, seeded_mix_mode_db) -> None:
         """Test graph-only search mode with real graph data."""
+        searcher = MixModeSearcher(
+            db=seeded_mix_mode_db.db,
+            config=MixModeConfig(
+                graph_config=GraphTraversalConfig(max_depth=2, max_nodes=10)
+            ),
+        )
+
+        results = await searcher.search_with_graph_only(
+            query_entities=["MongoDB"],
+            top_k=5,
+        )
+
+        assert results
+        assert all(result.search_type == "graph_only" for result in results)
+        assert any("Atlas" in result.content for result in results)
 
 
 class TestResultMerging:

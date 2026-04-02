@@ -9,62 +9,67 @@ import pytest
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_ingest_and_query(rag, test_documents):
-    """Test document ingestion and querying."""
+async def test_ingest_and_query_returns_context(rag, test_documents):
+    """Test document ingestion and retrieval-only query flow."""
     # Ingest documents
     for doc in test_documents:
-        await rag.insert(doc["content"], metadata=doc["metadata"])
+        await rag.insert(doc["content"])
 
-    # Query
-    results = await rag.query(
+    # Query without LLM generation
+    context = await rag.query(
         query="What is MongoDB Atlas?",
-        mode="hybrid",
+        mode="mix",
         top_k=5,
+        only_context=True,
     )
 
     # Verify
-    assert len(results) > 0, "Should return results"
-    assert results[0].content is not None, "Should have content"
-    assert results[0].score > 0, "Should have positive score"
+    assert isinstance(context, str), "Should return retrieved context"
+    assert len(context) > 0, "Context should not be empty"
+    assert "mongodb" in context.lower() or "atlas" in context.lower(), (
+        "Context should be relevant to the ingested documents"
+    )
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_query_with_answer(rag, test_documents):
-    """Test query with LLM answer generation."""
+async def test_query_with_sources_returns_context(rag, test_documents):
+    """Test source-aware query flow in retrieval-only mode."""
     # Ingest documents
     for doc in test_documents:
-        await rag.insert(doc["content"], metadata=doc["metadata"])
+        await rag.insert(doc["content"])
 
-    # Query with answer
-    answer = await rag.query_with_answer(
+    # Query with sources
+    result = await rag.query_with_sources(
         query="What is vector search?",
-        mode="hybrid",
+        mode="mix",
         top_k=3,
     )
 
     # Verify
-    assert isinstance(answer, str), "Should return string answer"
-    assert len(answer) > 0, "Answer should not be empty"
-    assert "vector" in answer.lower() or "search" in answer.lower(), (
-        "Answer should be relevant"
-    )
+    assert isinstance(result["answer"], str), "Should return an answer"
+    assert len(result["answer"]) > 0, "Answer should not be empty"
+    assert isinstance(result["context"], str), "Should return source context"
+    assert (
+        "vector" in result["answer"].lower() or "search" in result["answer"].lower()
+    ), "Answer should be relevant to the query"
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_search_modes(rag, test_documents):
-    """Test all search modes."""
+    """Test the supported public search modes in retrieval-only mode."""
     # Ingest documents
     for doc in test_documents:
-        await rag.insert(doc["content"], metadata=doc["metadata"])
+        await rag.insert(doc["content"])
 
     query = "MongoDB search features"
 
     # Test each mode
-    for mode in ["vector", "keyword", "hybrid"]:
-        results = await rag.query(query=query, mode=mode, top_k=3)
-        assert len(results) > 0, f"{mode} mode should return results"
-        assert all(r.score > 0 for r in results), (
-            f"{mode} mode should have positive scores"
+    for mode in ["naive", "hybrid", "mix"]:
+        context = await rag.query(query=query, mode=mode, top_k=3, only_context=True)
+        assert isinstance(context, str), f"{mode} mode should return context text"
+        assert len(context) > 0, f"{mode} mode should return non-empty output"
+        assert "mongodb" in context.lower() or "search" in context.lower(), (
+            f"{mode} mode should remain relevant"
         )

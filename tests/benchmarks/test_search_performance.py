@@ -28,19 +28,19 @@ def test_hybrid_search_latency(benchmark, rag, benchmark_queries):
         return await rag.query(query=query, mode="hybrid", top_k=10)
 
     result = benchmark(lambda: asyncio.run(search()))
-    assert len(result) > 0, "Should return results"
+    assert result, "Search should return a non-empty response"
 
 
 @pytest.mark.benchmark
-def test_vector_search_latency(benchmark, rag, benchmark_queries):
-    """Benchmark vector search latency."""
+def test_naive_search_latency(benchmark, rag, benchmark_queries):
+    """Benchmark the direct retrieval baseline exposed by the wrapper API."""
     query = benchmark_queries[0]
 
     async def search():
-        return await rag.query(query=query, mode="vector", top_k=10)
+        return await rag.query(query=query, mode="naive", top_k=10)
 
     result = benchmark(lambda: asyncio.run(search()))
-    assert len(result) > 0
+    assert result, "Search should return a non-empty response"
 
 
 @pytest.mark.benchmark

@@ -4,8 +4,8 @@ C9: Non-atomic ingestion -- _store_document must wrap insert_one + insert_many
     in run_with_transaction for atomicity.
 C10: Validator collection name alignment -- migrate_schema_validation.py must
      use 'ingested_documents' and 'ingested_chunks' matching rag.py pipeline defaults.
-C15: Integration test cleanup -- conftest.py rag fixture must call clear_collection()
-     after yielding (not commented out).
+C15: Integration test cleanup -- conftest.py rag fixture must call drop_database()
+     after yielding for thorough cleanup.
 
 Backing Skill: mongodb-schema-design
 """
@@ -142,39 +142,38 @@ class TestC10ValidatorCollectionNames:
 
 
 class TestC15IntegrationTestCleanup:
-    """C15: Integration test conftest.py rag fixture must call clear_collection()."""
+    """C15: Integration test conftest.py rag fixture must perform database cleanup."""
 
-    def test_rag_fixture_calls_clear_collection(self):
-        """The rag fixture must call clear_collection() (not commented out)."""
+    def test_rag_fixture_drops_database(self):
+        """The rag fixture must call drop_database() for thorough test cleanup."""
         import tests.integration.conftest as conftest_module
 
         source = inspect.getsource(conftest_module)
 
-        # Find the rag fixture function and check it has clear_collection call
-        # It must be an actual call, not a comment
+        # Find the rag fixture function and check it has drop_database call
         rag_fixture_source = self._extract_rag_fixture_source(source)
 
-        # Check for uncommented clear_collection call
+        # Check for uncommented drop_database call
         active_lines = [
             line.strip()
             for line in rag_fixture_source.split("\n")
             if line.strip() and not line.strip().startswith("#")
         ]
-        has_clear_collection = any("clear_collection" in line for line in active_lines)
-        assert has_clear_collection, (
-            "rag fixture must call clear_collection() (uncommented) for test cleanup"
+        has_drop_database = any("drop_database" in line for line in active_lines)
+        assert has_drop_database, (
+            "rag fixture must call drop_database() (uncommented) for test cleanup"
         )
 
-    def test_rag_fixture_cleanup_is_best_effort(self):
-        """clear_collection() call must be wrapped in try/except for resilience."""
+    def test_rag_fixture_closes_cleanup_client(self):
+        """Cleanup client must be closed after dropping the database."""
         import tests.integration.conftest as conftest_module
 
         source = inspect.getsource(conftest_module)
         rag_fixture_source = self._extract_rag_fixture_source(source)
 
-        # Must have try/except around clear_collection
-        assert "try:" in rag_fixture_source and "except" in rag_fixture_source, (
-            "clear_collection() must be wrapped in try/except for best-effort cleanup"
+        # Must close the client used for cleanup
+        assert "close()" in rag_fixture_source, (
+            "rag fixture must close the cleanup client after drop_database"
         )
 
     def _extract_rag_fixture_source(self, module_source: str) -> str:

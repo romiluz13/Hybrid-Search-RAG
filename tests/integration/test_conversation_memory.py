@@ -8,37 +8,37 @@ Tests the new schema design following MongoDB Best Practice Rule 1.1:
 Run with: pytest tests/integration/test_conversation_memory.py -v
 """
 
-import os
 import uuid
 
 import pytest
+from pymongo import AsyncMongoClient
 
 from hybridrag.memory import ConversationMemory
+from tests.conftest import _resolve_test_mongodb_uri
 
 
 @pytest.fixture
-def skip_if_no_mongodb():
-    """Skip test if MongoDB connection not available."""
-    if not os.getenv("MONGODB_URI"):
-        pytest.skip("MONGODB_URI not set - skipping integration test")
-
-
-@pytest.fixture
-async def memory(skip_if_no_mongodb):
+async def memory(require_mongodb_uri):
     """
     Create ConversationMemory instance for integration tests.
 
     Uses separate test collections to avoid polluting production data.
     """
+    test_uri = _resolve_test_mongodb_uri()
+    database_name = f"hybridrag_memory_{uuid.uuid4().hex[:8]}"
     memory_instance = ConversationMemory(
-        mongodb_uri=os.getenv("MONGODB_URI"),
-        database=os.getenv("MONGODB_DATABASE", "hybridrag_test"),
+        mongodb_uri=test_uri,
+        database=database_name,
         collection_name="test_conversation_sessions",
         messages_collection_name="test_conversation_messages",
     )
     await memory_instance.initialize()
     yield memory_instance
     await memory_instance.close()
+    # Drop the test database to prevent leak (C8)
+    client = AsyncMongoClient(test_uri)
+    await client.drop_database(database_name)
+    await client.close()
 
 
 @pytest.fixture

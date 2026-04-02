@@ -68,7 +68,7 @@ async def run_with_transaction(
     """
     # Try with transaction first
     try:
-        async with await client.start_session() as session:
+        async with client.start_session() as session:
             result = None
 
             async def _txn_body(s):

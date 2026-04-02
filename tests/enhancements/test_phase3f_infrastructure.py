@@ -187,30 +187,87 @@ class TestM41LangfuseDefersEnvReads:
 
 
 class TestM43DockerComposeEnvVars:
-    """M43: Docker-compose wrong env vars for atlas-local.
+    """M43: Docker compose must use no-auth config for atlas-local.
 
-    ALREADY DONE in Phase 1D (C12). Verify env vars are removed/commented.
+    atlas-local ignores MONGODB_INITDB_ROOT_* env vars -- it runs without auth.
+    The connection URI must NOT contain credentials.
     """
 
-    def test_no_hardcoded_credentials_in_docker_compose(self):
-        """docker-compose.local.yml must not have hardcoded MONGODB_INITDB_ROOT credentials."""
+    def test_docker_compose_uses_no_auth_atlas_local_config(self):
+        """docker-compose.local.yml must use no-auth config for atlas-local.
+
+        atlas-local ignores MONGODB_INITDB_ROOT_* env vars -- it runs without auth.
+        The connection URI must NOT contain credentials.
+        """
         import pathlib
 
         compose_path = (
             pathlib.Path(__file__).parents[2] / "docker" / "docker-compose.local.yml"
         )
-        if not compose_path.exists():
-            pytest.skip("docker-compose.local.yml not found")
+        assert compose_path.exists(), "docker-compose.local.yml must exist"
 
         content = compose_path.read_text()
-        assert "MONGODB_INITDB_ROOT_USERNAME" not in content or content.count(
-            "MONGODB_INITDB_ROOT_USERNAME"
-        ) == content.count("# MONGODB_INITDB_ROOT_USERNAME"), (
-            "Hardcoded MONGODB_INITDB_ROOT_USERNAME must be removed or commented out"
+        # atlas-local should NOT have auth vars (they are ignored by the image)
+        for line in content.splitlines():
+            stripped = line.strip()
+            # Skip comment lines -- auth vars mentioned in comments are OK
+            if stripped.startswith("#"):
+                continue
+            assert "MONGODB_INITDB_ROOT_USERNAME" not in stripped, (
+                "atlas-local ignores MONGODB_INITDB_ROOT_USERNAME -- remove it"
+            )
+            assert "MONGODB_INITDB_ROOT_PASSWORD" not in stripped, (
+                "atlas-local ignores MONGODB_INITDB_ROOT_PASSWORD -- remove it"
+            )
+
+    def test_docker_compose_has_initdb_database(self):
+        """docker-compose.local.yml must set MONGODB_INITDB_DATABASE=hybridrag."""
+        import pathlib
+
+        compose_path = (
+            pathlib.Path(__file__).parents[2] / "docker" / "docker-compose.local.yml"
         )
-        assert "MONGODB_INITDB_ROOT_PASSWORD" not in content, (
-            "Hardcoded MONGODB_INITDB_ROOT_PASSWORD must not be present"
+        content = compose_path.read_text()
+        assert "MONGODB_INITDB_DATABASE=hybridrag" in content, (
+            "docker-compose.local.yml must configure the database name"
         )
+
+    def test_docker_compose_has_no_auth_connection_uri(self):
+        """Connection URI comment must use no-auth format."""
+        import pathlib
+
+        compose_path = (
+            pathlib.Path(__file__).parents[2] / "docker" / "docker-compose.local.yml"
+        )
+        content = compose_path.read_text()
+        assert "mongodb://localhost:27017/?directConnection=true" in content, (
+            "docker-compose.local.yml must document the no-auth local URI"
+        )
+
+    def test_docker_compose_has_atlas_local_comment(self):
+        """docker-compose must explain that atlas-local ignores auth vars."""
+        import pathlib
+
+        compose_path = (
+            pathlib.Path(__file__).parents[2] / "docker" / "docker-compose.local.yml"
+        )
+        content = compose_path.read_text()
+        assert "atlas-local" in content.lower() and "ignor" in content.lower(), (
+            "docker-compose.local.yml must have a comment about atlas-local ignoring auth vars"
+        )
+
+    def test_docker_compose_has_healthcheck(self):
+        """docker-compose.local.yml must have a healthcheck block."""
+        import pathlib
+
+        compose_path = (
+            pathlib.Path(__file__).parents[2] / "docker" / "docker-compose.local.yml"
+        )
+        content = compose_path.read_text()
+        assert "healthcheck" in content, (
+            "docker-compose.local.yml must have a healthcheck block"
+        )
+        assert "mongosh" in content, "healthcheck must use mongosh for the ping test"
 
 
 class TestM44CILintPinnedVersions:
@@ -224,8 +281,7 @@ class TestM44CILintPinnedVersions:
         import pathlib
 
         ci_path = pathlib.Path(__file__).parents[2] / ".github" / "workflows" / "ci.yml"
-        if not ci_path.exists():
-            pytest.skip(".github/workflows/ci.yml not found")
+        assert ci_path.exists(), ".github/workflows/ci.yml must exist"
 
         content = ci_path.read_text()
         # Should have ruff==X.Y.Z, not just "ruff"
@@ -238,8 +294,7 @@ class TestM44CILintPinnedVersions:
         import pathlib
 
         ci_path = pathlib.Path(__file__).parents[2] / ".github" / "workflows" / "ci.yml"
-        if not ci_path.exists():
-            pytest.skip(".github/workflows/ci.yml not found")
+        assert ci_path.exists(), ".github/workflows/ci.yml must exist"
 
         content = ci_path.read_text()
         # Should have mypy==X.Y.Z, not just "mypy"

@@ -39,6 +39,8 @@ app = typer.Typer(
 # Rich console
 console = Console()
 
+SUPPORTED_QUERY_MODES = ["naive", "local", "global", "hybrid", "mix", "bypass"]
+
 
 def version_callback(value: bool):
     """Show version and exit."""
@@ -117,15 +119,10 @@ MONGODB_DATABASE=hybridrag_db
 
 # Voyage AI
 VOYAGE_API_KEY={voyage_key}
-EMBEDDINGS_MODEL=voyage-3-large
 
 # Anthropic (Claude)
 ANTHROPIC_API_KEY={anthropic_key}
-LLM_MODEL=claude-3-5-sonnet-20241022
 LLM_PROVIDER=anthropic
-
-# Collection
-COLLECTION_NAME=hybrid_search
 """.format(
         mongodb_uri=mongodb_uri or "mongodb+srv://user:pass@cluster.mongodb.net/",
         voyage_key=voyage_key or "pa-xxxxx",
@@ -235,10 +232,10 @@ def ingest_url(
 def query(
     question: str = typer.Argument(..., help="Question to ask"),
     mode: str = typer.Option(
-        "hybrid",
+        "mix",
         "--mode",
         "-m",
-        help="Search mode: vector, keyword, or hybrid",
+        help=f"Search mode: {', '.join(SUPPORTED_QUERY_MODES)}",
     ),
     top_k: int = typer.Option(10, "--top-k", "-k", help="Number of results"),
 ):
@@ -253,8 +250,14 @@ def query(
         try:
             console.print(f"\n[bold blue]Query:[/bold blue] {question}\n")
 
+            if mode not in SUPPORTED_QUERY_MODES:
+                console.print(
+                    f"[red]Unsupported mode '{mode}'. Choose from: {', '.join(SUPPORTED_QUERY_MODES)}[/red]"
+                )
+                raise typer.Exit(1)
+
             with console.status("[bold green]Searching...[/bold green]"):
-                answer = await rag.query_with_answer(
+                answer = await rag.query(
                     query=question,
                     mode=mode,
                     top_k=top_k,
@@ -284,8 +287,8 @@ def chat():
         console.print(
             Panel(
                 "[bold blue]HybridRAG Interactive Chat[/bold blue]\n\n"
-                f"[dim]Database: {settings.MONGODB_DATABASE}[/dim]\n"
-                f"[dim]Model: {settings.LLM_MODEL}[/dim]\n\n"
+                f"[dim]Database: {settings.mongodb_database}[/dim]\n"
+                f"[dim]Provider: {settings.llm_provider}[/dim]\n\n"
                 "[dim]Commands: 'exit', 'info', 'clear', 'new', 'history'[/dim]",
                 style="blue",
                 padding=(1, 2),
@@ -324,11 +327,11 @@ def status():
             table.add_column("Value", style="green")
 
             # Add configuration
-            table.add_row("MongoDB Database", settings.MONGODB_DATABASE)
-            table.add_row("Collection", settings.COLLECTION_NAME)
-            table.add_row("LLM Provider", settings.LLM_PROVIDER)
-            table.add_row("LLM Model", settings.LLM_MODEL)
-            table.add_row("Embeddings Model", settings.EMBEDDINGS_MODEL)
+            table.add_row("MongoDB Database", settings.mongodb_database)
+            table.add_row("MongoDB Workspace", settings.mongodb_workspace)
+            table.add_row("LLM Provider", settings.llm_provider)
+            table.add_row("Embedding Provider", settings.embedding_provider)
+            table.add_row("Voyage Embedding Model", settings.voyage_embedding_model)
 
             # Add status data
             for key, value in status_data.items():
@@ -354,37 +357,22 @@ def index_create():
     Creates vector and text search indexes.
     """
 
-    async def _create():
-        from pymongo import MongoClient
-
-        settings = get_settings()
-        client = MongoClient(settings.MONGODB_URI)
-        try:
-            db = client[settings.MONGODB_DATABASE]
-            db[settings.COLLECTION_NAME]
-
-            console.print("[bold blue]Creating Atlas Search indexes...[/bold blue]\n")
-
-            # Note: Index creation via API requires Atlas admin permissions
-            console.print(
-                "[yellow]Index creation requires MongoDB Atlas UI or API access.[/yellow]"
-            )
-            console.print("\n[bold]Required indexes:[/bold]")
-            console.print("\n1. Vector Search Index:")
-            console.print("   Name: vector_index")
-            console.print("   Field: embedding")
-            console.print("   Dimensions: 1024 (voyage-3-large)")
-            console.print("   Similarity: cosine")
-            console.print("\n2. Atlas Search Index:")
-            console.print("   Name: text_index")
-            console.print("   Field: content (text)")
-            console.print(
-                "\n[dim]Create these in MongoDB Atlas UI → Database → Search[/dim]"
-            )
-        finally:
-            client.close()
-
-    asyncio.run(_create())
+    settings = get_settings()
+    console.print("[bold blue]Atlas Search Index Guidance[/bold blue]\n")
+    console.print(
+        "[yellow]Search index creation is handled by the MongoDB-backed storage layer during initialization, "
+        "and the exact collection names depend on the configured workspace.[/yellow]"
+    )
+    console.print(f"\nDatabase: [cyan]{settings.mongodb_database}[/cyan]")
+    console.print(f"Workspace: [cyan]{settings.mongodb_workspace}[/cyan]")
+    console.print(
+        f"Embedding model: [cyan]{settings.voyage_embedding_model}[/cyan] "
+        f"(dimension {settings.embedding_dim})"
+    )
+    console.print(
+        "\n[dim]Use 'hybridrag status' after initialization and inspect the generated MongoDB collections "
+        "before creating Atlas Search indexes manually.[/dim]"
+    )
 
 
 @index_app.command("list")
@@ -397,21 +385,23 @@ def index_list():
         from pymongo import MongoClient
 
         settings = get_settings()
-        client = MongoClient(settings.MONGODB_URI)
+        client = MongoClient(settings.mongodb_uri.get_secret_value())
         try:
-            db = client[settings.MONGODB_DATABASE]
-            collection = db[settings.COLLECTION_NAME]
+            db = client[settings.mongodb_database]
 
-            table = Table(title="MongoDB Indexes", show_header=True)
+            table = Table(title="MongoDB Collection Indexes", show_header=True)
+            table.add_column("Collection", style="magenta")
             table.add_column("Name", style="cyan")
             table.add_column("Keys", style="green")
             table.add_column("Type", style="yellow")
 
-            for idx in collection.list_indexes():
-                name = idx.get("name", "N/A")
-                keys = str(idx.get("key", {}))
-                idx_type = idx.get("type", "standard")
-                table.add_row(name, keys, idx_type)
+            for collection_name in sorted(db.list_collection_names()):
+                collection = db[collection_name]
+                for idx in collection.list_indexes():
+                    name = idx.get("name", "N/A")
+                    keys = str(idx.get("key", {}))
+                    idx_type = idx.get("type", "standard")
+                    table.add_row(collection_name, name, keys, idx_type)
 
             console.print(table)
         finally:

@@ -13,6 +13,7 @@ This is the main RAG engine providing:
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -92,6 +93,17 @@ def _create_embedding_func(
 
 def _create_llm_func(settings: Settings) -> Callable[..., str]:
     """Create LLM function based on provider setting."""
+    if not settings.enable_llm:
+
+        async def _llm_disabled(*args, **kwargs) -> str:
+            raise RuntimeError(
+                "LLM generation is disabled. Enable settings.enable_llm or "
+                "use retrieval-only flows such as query(..., only_context=True)."
+            )
+
+        logger.info("[INIT] LLM generation disabled by settings.enable_llm=False")
+        return _llm_disabled
+
     provider = settings.llm_provider
     logger.info(f"[INIT] Creating LLM function for provider: {provider}")
 
@@ -114,9 +126,16 @@ def _create_llm_func(settings: Settings) -> Callable[..., str]:
         if not settings.openai_api_key:
             raise ValueError("OPENAI_API_KEY required when llm_provider=openai")
         logger.info(f"[INIT] OpenAI LLM configured: model={settings.openai_model}")
+        extra_headers = None
+        if settings.openai_extra_headers:
+            import json
+
+            extra_headers = json.loads(settings.openai_extra_headers)
         return create_openai_llm_func(
             api_key=settings.openai_api_key.get_secret_value(),
             model=settings.openai_model,
+            base_url=settings.openai_base_url,
+            default_headers=extra_headers,
         )
 
     elif provider == "gemini":
@@ -279,10 +298,15 @@ class HybridRAG:
         # Create LLM function based on provider
         logger.info("[INIT] Creating LLM function...")
         llm_func = _create_llm_func(self.settings)
-        self._llm_func = llm_func  # Store for direct use in query_with_sources
+        self._llm_func = llm_func if self.settings.enable_llm else None
 
         # Initialize RAG engine with MongoDB storage
         logger.info("[INIT] Initializing RAG engine with MongoDB storage...")
+        # LightRAG engine storage classes read MONGO_URI/MONGO_DATABASE from env vars
+        # during initialization (see engine/kg/mongo_impl.py:90, engine/kg/__init__.py:49).
+        # Explicit settings ALWAYS win over stale env/shell state.
+        os.environ["MONGO_URI"] = self.settings.mongodb_uri.get_secret_value()
+        os.environ["MONGO_DATABASE"] = self.settings.mongodb_database
         self._rag_engine = _RAGEngine(
             working_dir=self.working_dir,
             # MongoDB storage backends
@@ -318,12 +342,17 @@ class HybridRAG:
             mongodb_uri=self.settings.mongodb_uri.get_secret_value(),
             database=self.settings.mongodb_database,
             max_token_limit=32000,  # Compact when exceeds 32K tokens (models support 200K+)
-            llm_func=llm_func,  # Enable summarization for compaction
+            llm_func=llm_func if self.settings.enable_llm else None,
         )
         await self._memory.initialize()
-        logger.info(
-            "[INIT] Conversation memory initialized (with self-compaction enabled)"
-        )
+        if self.settings.enable_llm:
+            logger.info(
+                "[INIT] Conversation memory initialized (with self-compaction enabled)"
+            )
+        else:
+            logger.info(
+                "[INIT] Conversation memory initialized (retrieval-only, compaction disabled)"
+            )
 
         self._initialized = True
         logger.info("[INIT] ========== HybridRAG Initialization Complete ==========")

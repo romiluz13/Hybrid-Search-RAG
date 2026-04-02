@@ -57,9 +57,9 @@ async def example_single_url():
 
     # Query the ingested content
     print("\nQuerying ingested content...")
-    answer = await rag.query_with_answer(
+    answer = await rag.query(
         query="What is Atlas Vector Search?",
-        mode="hybrid",
+        mode="mix",
         top_k=5,
     )
 
@@ -109,9 +109,9 @@ async def example_website_crawl():
 
     # Query across all crawled pages
     print("\nQuerying across all pages...")
-    answer = await rag.query_with_answer(
+    answer = await rag.query(
         query="How do I create a vector search index in Atlas?",
-        mode="hybrid",
+        mode="mix",
         top_k=10,
     )
 

@@ -320,11 +320,12 @@ class TestH25ExamplesCleanup:
             "H25 VIOLATION: 06_conversation_memory.py missing close_shared_client cleanup."
         )
 
-    def test_custom_filters_has_cleanup(self):
-        """07_custom_filters.py must have close_shared_client in finally block."""
+    def test_custom_filters_is_offline_only(self):
+        """07_custom_filters.py is offline-only (no DB connection, no cleanup needed)."""
         source = self._read_example("07_custom_filters.py")
-        assert "close_shared_client" in source, (
-            "H25 VIOLATION: 07_custom_filters.py missing close_shared_client cleanup."
+        # Offline example should not create HybridRAG or open MongoDB connections
+        assert "create_hybridrag" not in source, (
+            "07_custom_filters.py should be offline-only (no create_hybridrag call)."
         )
 
     def test_langgraph_agent_has_cleanup(self):

@@ -326,7 +326,7 @@ class TestM8ErrorCodeCheckingVerify:
         # Create OperationFailure with error code 20 (IllegalOperation)
         error = OperationFailure("test error", code=20)
         mock_session.with_transaction = AsyncMock(side_effect=error)
-        mock_client.start_session = AsyncMock(return_value=mock_session)
+        mock_client.start_session = MagicMock(return_value=mock_session)
 
         result = await run_with_transaction(mock_client, my_callback)
         assert result == "success"
@@ -359,7 +359,7 @@ class TestM9TransactionConcerns:
             await callback(mock_session)
 
         mock_session.with_transaction = capture_with_transaction
-        mock_client.start_session = AsyncMock(return_value=mock_session)
+        mock_client.start_session = MagicMock(return_value=mock_session)
 
         await run_with_transaction(mock_client, my_callback)
 
@@ -388,7 +388,7 @@ class TestM9TransactionConcerns:
             await callback(mock_session)
 
         mock_session.with_transaction = capture_with_transaction
-        mock_client.start_session = AsyncMock(return_value=mock_session)
+        mock_client.start_session = MagicMock(return_value=mock_session)
 
         await run_with_transaction(mock_client, my_callback)
 

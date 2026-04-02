@@ -80,14 +80,18 @@ async def example_basic_evaluation():
     print(f"\nQuery: {query}\n")
     print("Getting RAG response...")
 
-    results = await rag.query(query=query, mode="hybrid", top_k=3)
-    answer = await rag.query_with_answer(query=query, mode="hybrid", top_k=3)
+    result = await rag.query_with_sources(query=query, mode="mix", top_k=3)
+    answer = result["answer"]
+    context = result["context"]
 
     # Prepare evaluation dataset
     eval_data = {
         "question": [query],
         "answer": [answer],
-        "contexts": [[r.content for r in results]],
+        # RAGAS expects contexts as list[list[str]] — one list of chunks per question.
+        # query_with_sources() returns a single concatenated string; split by paragraph
+        # as a best-effort approximation of the original chunks.
+        "contexts": [context.split("\n\n") if context else []],
         "ground_truth": ["MongoDB Atlas is a fully managed cloud database service."],
     }
 
@@ -137,20 +141,24 @@ async def example_compare_modes():
 
     print(f"\nQuery: {query}\n")
 
-    modes = ["vector", "keyword", "hybrid"]
+    # naive  = vector-only retrieval (no knowledge graph)
+    # hybrid = LightRAG's local+global combined mode
+    # mix    = hybrid_rrf + graph traversal + entity boosting (fullest pipeline)
+    modes = ["naive", "hybrid", "mix"]
     results_by_mode = {}
 
     # Evaluate each mode
     for mode in modes:
         print(f"Evaluating {mode} mode...")
 
-        results = await rag.query(query=query, mode=mode, top_k=3)
-        answer = await rag.query_with_answer(query=query, mode=mode, top_k=3)
+        result = await rag.query_with_sources(query=query, mode=mode, top_k=3)
+        answer = result["answer"]
+        context = result["context"]
 
         eval_data = {
             "question": [query],
             "answer": [answer],
-            "contexts": [[r.content for r in results]],
+            "contexts": [context.split("\n\n") if context else []],
             "ground_truth": [ground_truth],
         }
 
@@ -224,12 +232,14 @@ async def example_batch_evaluation():
 
     for test in test_cases:
         query = test["question"]
-        results = await rag.query(query=query, mode="hybrid", top_k=3)
-        answer = await rag.query_with_answer(query=query, mode="hybrid", top_k=3)
+        result = await rag.query_with_sources(query=query, mode="mix", top_k=3)
+        answer = result["answer"]
+        context = result["context"]
 
         questions.append(query)
         answers.append(answer)
-        contexts.append([r.content for r in results])
+        # Split concatenated context into paragraph-level chunks for RAGAS
+        contexts.append(context.split("\n\n") if context else [])
         ground_truths.append(test["ground_truth"])
 
     # Create dataset
@@ -339,35 +349,40 @@ Tuned (hybrid 0.6/0.4)   |   0.78    |     0.87     |   0.71
 
 async def main():
     """Run all examples."""
+    from hybridrag.core.mongodb_client import close_shared_client
+
     print("\n" + "=" * 60)
     print("HybridRAG Example 08: Evaluation with RAGAS")
     print("=" * 60)
 
-    # Check if RAGAS is installed
     try:
-        import ragas
+        # Check if RAGAS is installed
+        try:
+            import ragas
 
-        print(f"\nRAGAS version: {ragas.__version__}")
-    except ImportError:
-        print("\nError: RAGAS not installed.")
-        print("Install with: pip install ragas datasets langchain-openai")
-        print("\nShowing documentation examples only...\n")
+            print(f"\nRAGAS version: {ragas.__version__}")
+        except ImportError:
+            print("\nError: RAGAS not installed.")
+            print("Install with: pip install ragas datasets langchain-openai")
+            print("\nShowing documentation examples only...\n")
 
-    # Run examples
-    await example_basic_evaluation()
-    await example_compare_modes()
-    await example_batch_evaluation()
-    await example_custom_metrics()
-    await example_optimization_workflow()
+        # Run examples
+        await example_basic_evaluation()
+        await example_compare_modes()
+        await example_batch_evaluation()
+        await example_custom_metrics()
+        await example_optimization_workflow()
 
-    print("\n" + "=" * 60)
-    print("All examples complete!")
-    print("=" * 60)
-    print("\nKey Takeaways:")
-    print("  - RAGAS provides objective metrics for RAG quality")
-    print("  - Evaluate multiple search modes to find the best")
-    print("  - Use batch evaluation for comprehensive testing")
-    print("  - Iterate based on metric feedback")
+        print("\n" + "=" * 60)
+        print("All examples complete!")
+        print("=" * 60)
+        print("\nKey Takeaways:")
+        print("  - RAGAS provides objective metrics for RAG quality")
+        print("  - Evaluate multiple search modes to find the best")
+        print("  - Use batch evaluation for comprehensive testing")
+        print("  - Iterate based on metric feedback")
+    finally:
+        close_shared_client()
 
 
 if __name__ == "__main__":

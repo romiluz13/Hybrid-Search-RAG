@@ -28,7 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from hybridrag import QueryParam, create_hybridrag
+from hybridrag import create_hybridrag
 
 
 async def main() -> None:
@@ -87,11 +87,9 @@ async def main() -> None:
 
             # Query with default parameters
             response = await rag.query(
-                query,
-                param=QueryParam(
-                    mode="hybrid",  # Use hybrid search (vector + keyword)
-                    top_k=3,  # Return top 3 results
-                ),
+                query=query,
+                mode="mix",  # Use the recommended all-signals retrieval mode
+                top_k=3,
             )
 
             print(f"A: {response[:500]}...")  # Truncate for readability

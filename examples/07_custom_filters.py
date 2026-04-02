@@ -8,84 +8,12 @@ Demonstrates:
 - Metadata filtering
 - Combining filters
 
-Prerequisites:
-- MONGODB_URI in .env
-- VOYAGE_API_KEY in .env
-- Documents with metadata fields
+This example only builds filter objects and shows where to attach them in
+MongoDB search pipelines. It does not require a live database connection.
 """
 
 import asyncio
-import os
 from datetime import UTC, datetime, timedelta
-
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
-
-# Check required environment variables
-if not os.getenv("MONGODB_URI"):
-    raise ValueError("MONGODB_URI not set in environment")
-if not os.getenv("VOYAGE_API_KEY"):
-    raise ValueError("VOYAGE_API_KEY not set in environment")
-
-
-async def setup_test_data():
-    """Insert sample documents with metadata."""
-    from hybridrag import create_hybridrag
-
-    rag = await create_hybridrag()
-
-    # Sample documents with different metadata
-    documents = [
-        {
-            "content": "MongoDB Atlas is a cloud database service for modern applications.",
-            "metadata": {
-                "source": "mongodb_docs",
-                "category": "platform",
-                "topic": "atlas",
-                "language": "en",
-                "timestamp": datetime.now(UTC) - timedelta(days=1),
-            },
-        },
-        {
-            "content": "Vector search in MongoDB Atlas enables semantic similarity searches.",
-            "metadata": {
-                "source": "mongodb_docs",
-                "category": "features",
-                "topic": "vector_search",
-                "language": "en",
-                "timestamp": datetime.now(UTC) - timedelta(days=7),
-            },
-        },
-        {
-            "content": "Atlas Search provides full-text search with fuzzy matching.",
-            "metadata": {
-                "source": "mongodb_docs",
-                "category": "features",
-                "topic": "atlas_search",
-                "language": "en",
-                "timestamp": datetime.now(UTC) - timedelta(days=30),
-            },
-        },
-        {
-            "content": "MongoDB pricing varies by cluster tier and storage usage.",
-            "metadata": {
-                "source": "mongodb_docs",
-                "category": "pricing",
-                "topic": "costs",
-                "language": "en",
-                "timestamp": datetime.now(UTC) - timedelta(days=60),
-            },
-        },
-    ]
-
-    print("Setting up test data...")
-    for doc in documents:
-        await rag.insert(doc["content"], metadata=doc["metadata"])
-
-    print(f"✓ Inserted {len(documents)} test documents\n")
-    return rag
 
 
 async def example_vector_search_filters():
@@ -98,8 +26,6 @@ async def example_vector_search_filters():
     print("=" * 60)
     print("Example 1: Vector Search Filters (Standard MongoDB)")
     print("=" * 60)
-
-    await setup_test_data()
 
     # Filter by category
     filter_config = VectorSearchFilterConfig(
@@ -233,11 +159,18 @@ async def example_in_filters():
     print("Example usage:")
     print("""
     # This will match documents with category='features' OR category='platform'
-    results = await rag.query_with_filters(
-        query="mongodb search",
-        filter_config=filter_config,
-        mode="vector",
-    )
+    filters = build_vector_search_filters(filter_config)
+    pipeline = [
+        {
+            "$vectorSearch": {
+                "index": "vector_index",
+                "path": "embedding",
+                "queryVector": embedding,
+                "filter": filters,
+                "limit": 10,
+            }
+        }
+    ]
     """)
 
 
@@ -251,19 +184,23 @@ async def example_combined_filters():
     print("Example 5: Combined Filters")
     print("=" * 60)
 
+    from hybridrag.enhancements import build_vector_search_filters
+
     # Combine equality, range, and IN filters
-    VectorSearchFilterConfig(
+    combined_config = VectorSearchFilterConfig(
         equality_filters={"metadata.source": "mongodb_docs"},
         range_filters={
             "metadata.timestamp": {"$gte": datetime.now(UTC) - timedelta(days=30)}
         },
         in_filters={"metadata.category": ["features", "platform"]},
     )
+    combined_filters = build_vector_search_filters(combined_config)
 
     print("\nCombined filter:")
     print("  - source = 'mongodb_docs'")
     print("  - timestamp >= 30 days ago")
-    print("  - category IN ['features', 'platform']\n")
+    print("  - category IN ['features', 'platform']")
+    print(f"  MongoDB filter: {combined_filters}\n")
 
     print("All conditions must match (AND logic)\n")
 
@@ -276,15 +213,19 @@ async def example_practical_use_case():
     print("Example 6: Practical Use Case")
     print("=" * 60)
 
-    await setup_test_data()
+    from hybridrag.enhancements import build_vector_search_filters
 
     query = "How does search work?"
 
     # Search only in 'features' category
-    VectorSearchFilterConfig(equality_filters={"metadata.category": "features"})
+    practical_config = VectorSearchFilterConfig(
+        equality_filters={"metadata.category": "features"}
+    )
+    practical_filters = build_vector_search_filters(practical_config)
 
     print(f"\nQuery: {query}")
-    print("Filter: category='features'\n")
+    print("Filter: category='features'")
+    print(f"  MongoDB filter: {practical_filters}\n")
 
     print("This would search only in documents with category='features',")
     print("excluding documents about pricing, platform, etc.\n")
@@ -297,8 +238,6 @@ async def example_practical_use_case():
 
 async def main():
     """Run all examples."""
-    from hybridrag.core.mongodb_client import close_shared_client
-
     print("\n" + "=" * 60)
     print("HybridRAG Example 07: Custom Filters")
     print("=" * 60)
@@ -321,7 +260,7 @@ async def main():
         print("  - Both filter systems are type-safe and builder-based")
         print("  - Filters improve performance and relevance")
     finally:
-        close_shared_client()
+        print("\nExample finished without touching a live database.")
 
 
 if __name__ == "__main__":

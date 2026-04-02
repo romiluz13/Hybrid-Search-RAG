@@ -1,5 +1,7 @@
 """Tests for graph search module."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from hybridrag.enhancements.graph_search import (
@@ -7,6 +9,9 @@ from hybridrag.enhancements.graph_search import (
     GraphTraversalConfig,
     GraphTraversalResult,
     build_graph_lookup_pipeline,
+    expand_entities_via_graph,
+    get_chunks_for_entities,
+    graph_traversal,
     normalize_entity_name,
 )
 
@@ -183,25 +188,100 @@ class TestBuildGraphLookupPipeline:
 
 
 class TestGraphSearchIntegration:
-    """Integration tests (require MongoDB connection).
+    """Integration tests for real MongoDB-backed graph traversal behavior."""
 
-    L22: Removed empty stub bodies with pass/pytest.skip() calls.
-    L26: Removed redundant pytest.skip() inside @pytest.mark.skip decorated tests.
-    TODO: Implement when MongoDB integration test infrastructure is available.
-    Tracked stubs:
-    - test_graph_traversal_execution: Full traversal with real graph data
-    - test_expand_entities_via_graph: Entity expansion via graph edges
-    - test_get_chunks_for_entities: Chunk retrieval for discovered entities
-    """
+    @pytest.fixture
+    async def seeded_graph_db(self, mongodb_test_db):
+        """Seed graph edges and chunks into an isolated test database."""
+        now = datetime.now(UTC)
 
-    @pytest.mark.skip(reason="Requires MongoDB connection - TODO: implement")
-    async def test_graph_traversal_execution(self) -> None:
+        await mongodb_test_db["kg_edges"].insert_many(
+            [
+                {
+                    "source_node_id": "mongodb",
+                    "target_node_id": "atlas",
+                    "relationship_type": "platform_for",
+                    "weight": 0.95,
+                },
+                {
+                    "source_node_id": "atlas",
+                    "target_node_id": "vector search",
+                    "relationship_type": "supports",
+                    "weight": 0.90,
+                },
+                {
+                    "source_node_id": "atlas",
+                    "target_node_id": "search indexes",
+                    "relationship_type": "uses",
+                    "weight": 0.75,
+                },
+            ]
+        )
+
+        await mongodb_test_db["text_chunks"].insert_many(
+            [
+                {
+                    "document_id": "doc-1",
+                    "content": "Atlas supports Vector Search with search indexes.",
+                    "entities": [
+                        {"name": "Atlas"},
+                        {"name": "Vector Search"},
+                    ],
+                    "timestamp": now,
+                    "metadata": {"source": "mongodb-docs"},
+                },
+                {
+                    "document_id": "doc-2",
+                    "content": "MongoDB Atlas is the platform behind the search stack.",
+                    "entities": [
+                        {"name": "MongoDB"},
+                        {"name": "Atlas"},
+                    ],
+                    "timestamp": now - timedelta(hours=1),
+                    "metadata": {"source": "product-overview"},
+                },
+            ]
+        )
+
+        return mongodb_test_db
+
+    @pytest.mark.asyncio
+    async def test_graph_traversal_execution(self, seeded_graph_db) -> None:
         """Test actual graph traversal execution with MongoDB."""
+        result = await graph_traversal(
+            seeded_graph_db,
+            "MongoDB",
+            GraphTraversalConfig(max_depth=2, max_nodes=10),
+        )
 
-    @pytest.mark.skip(reason="Requires MongoDB connection - TODO: implement")
-    async def test_expand_entities_via_graph(self) -> None:
+        assert "atlas" in result.related_entities
+        assert "vector search" in result.related_entities
+        assert result.total_edges_traversed >= 2
+        assert any(edge.relationship_type == "supports" for edge in result.edges)
+
+    @pytest.mark.asyncio
+    async def test_expand_entities_via_graph(self, seeded_graph_db) -> None:
         """Test entity expansion via graph traversal."""
+        entities, edges = await expand_entities_via_graph(
+            seeded_graph_db,
+            ["MongoDB"],
+            GraphTraversalConfig(max_depth=2, max_nodes=10),
+        )
 
-    @pytest.mark.skip(reason="Requires MongoDB connection - TODO: implement")
-    async def test_get_chunks_for_entities(self) -> None:
+        assert "atlas" in entities
+        assert "vector search" in entities
+        assert len(edges) >= 2
+
+    @pytest.mark.asyncio
+    async def test_get_chunks_for_entities(self, seeded_graph_db) -> None:
         """Test chunk retrieval for entities from graph."""
+        chunks = await get_chunks_for_entities(
+            seeded_graph_db,
+            ["Atlas", "Vector Search"],
+            limit=10,
+            config=GraphTraversalConfig(),
+        )
+
+        assert chunks
+        assert chunks[0]["matched_entities"] >= 1
+        assert any("Atlas" in chunk["content"] for chunk in chunks)
