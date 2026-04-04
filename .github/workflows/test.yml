@@ -26,7 +26,10 @@ jobs:
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-5.4
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_EXTRA_HEADERS: ${{ secrets.OPENAI_EXTRA_HEADERS }}
         run: |
           pytest tests/ -v \
             --ignore=tests/integration/ \
@@ -54,6 +57,70 @@ jobs:
               body: `Daily test suite failed.\n\nWorkflow: ${context.workflow}\nRun: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               labels: ['ci-failure']
             })
+
+  live-release-gate:
+    name: Live Release Gate
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongodb/mongodb-atlas-local:preview
+        ports:
+          - 27018:27017
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+
+      - name: Run deterministic live gate
+        env:
+          MONGODB_URI: mongodb://localhost:27018/?directConnection=true
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-5.4
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_EXTRA_HEADERS: ${{ secrets.OPENAI_EXTRA_HEADERS }}
+        run: |
+          python tests/e2e_real_test.py
+
+  atlas-cloud-smoke:
+    name: Atlas Cloud Smoke
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+
+      - name: Run Atlas smoke gate when configured
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_ATLAS_URI }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-5.4
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_EXTRA_HEADERS: ${{ secrets.OPENAI_EXTRA_HEADERS }}
+        run: |
+          if [ -z "$MONGODB_URI" ]; then
+            echo "MONGODB_ATLAS_URI not configured; skipping Atlas cloud smoke."
+            exit 0
+          fi
+          python tests/e2e_real_test.py
 
   benchmark:
     name: Performance Benchmarks

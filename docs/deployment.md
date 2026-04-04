@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Guide to deploying HybridRAG to production.
+Guide to deploying HybridRAG as a backend-first Python service.
 
 ## Pre-Deployment Checklist
 
@@ -13,6 +13,17 @@ Guide to deploying HybridRAG to production.
 - [ ] Monitoring configured (Langfuse recommended)
 
 ## Deployment Options
+
+## Blessed Deployment Shape
+
+The publish-ready reference path is:
+
+- MongoDB Atlas 8.2+ in cloud, or `mongodb/mongodb-atlas-local:preview` on `mongodb://localhost:27018/?directConnection=true` for deterministic local validation
+- Voyage for embeddings and reranking
+- OpenAI API or an OpenAI-compatible endpoint for generation
+- FastAPI as the primary service surface
+
+The release gate is designed to fail fast on this stack. Unsupported capabilities should error explicitly rather than silently degrading.
 
 ### Option 1: Docker Deployment
 
@@ -38,8 +49,8 @@ RUN pip install --no-cache-dir -e ".[all]"
 # Expose port
 EXPOSE 8000
 
-# Run Chainlit UI
-CMD ["chainlit", "run", "src/hybridrag/ui/chat.py", "--host", "0.0.0.0", "--port", "8000"]
+# Run the FastAPI service
+CMD ["uvicorn", "hybridrag.api.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 #### Docker Compose
@@ -56,7 +67,10 @@ services:
       - MONGODB_URI=${MONGODB_URI}
       - MONGODB_DATABASE=${MONGODB_DATABASE}
       - VOYAGE_API_KEY=${VOYAGE_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - OPENAI_EXTRA_HEADERS=${OPENAI_EXTRA_HEADERS}
     env_file:
       - .env
     restart: unless-stopped
@@ -91,7 +105,7 @@ docker-compose up -d
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "chainlit run src/hybridrag/ui/chat.py --host 0.0.0.0 --port $PORT"
+    "startCommand": "uvicorn hybridrag.api.main:create_app --factory --host 0.0.0.0 --port $PORT"
   }
 }
 ```
@@ -101,7 +115,7 @@ docker-compose up -d
 1. Create new Web Service
 2. Connect GitHub repository
 3. Set build command: `pip install -e ".[all]"`
-4. Set start command: `chainlit run src/hybridrag/ui/chat.py --host 0.0.0.0 --port $PORT`
+4. Set start command: `uvicorn hybridrag.api.main:create_app --factory --host 0.0.0.0 --port $PORT`
 5. Add environment variables
 6. Deploy!
 
@@ -109,7 +123,7 @@ docker-compose up -d
 
 **Procfile:**
 ```
-web: chainlit run src/hybridrag/ui/chat.py --host 0.0.0.0 --port $PORT
+web: uvicorn hybridrag.api.main:create_app --factory --host 0.0.0.0 --port $PORT
 ```
 
 **runtime.txt:**
@@ -125,36 +139,10 @@ heroku config:set VOYAGE_API_KEY=...
 git push heroku main
 ```
 
-### Option 3: FastAPI Deployment
+### Option 3: Local API Run
 
-Deploy the REST API instead of the UI:
-
-```python
-# src/hybridrag/api/main.py
-from fastapi import FastAPI
-from hybridrag import create_hybridrag
-
-app = FastAPI()
-rag = None
-
-@app.on_event("startup")
-async def startup():
-    global rag
-    rag = await create_hybridrag()
-
-@app.post("/query")
-async def query(request: QueryRequest):
-    result = await rag.query_with_memory(
-        query=request.query,
-        session_id=request.session_id,
-        mode=request.mode or "mix",
-    )
-    return result
-```
-
-Run with:
 ```bash
-uvicorn src.hybridrag.api.main:app --host 0.0.0.0 --port 8000
+uvicorn hybridrag.api.main:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
 ## Environment Configuration
@@ -170,7 +158,11 @@ MONGODB_DATABASE=hybridrag_prod
 VOYAGE_API_KEY=pa-xxxxxxxxxxxxx
 
 # LLM
-ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
+OPENAI_API_KEY=sk-xxxxxxxxxxxxx
+OPENAI_MODEL=gpt-5.4
+# Optional for OpenAI-compatible gateways:
+# OPENAI_BASE_URL=https://your-endpoint/v1
+# OPENAI_EXTRA_HEADERS={"api-key":"..."}
 
 # Observability
 LANGFUSE_PUBLIC_KEY=pk-lf-xxxxxxxxxxxxx
@@ -178,8 +170,10 @@ LANGFUSE_SECRET_KEY=sk-lf-xxxxxxxxxxxxx
 LANGFUSE_HOST=https://cloud.langfuse.com
 
 # Security
-SECRET_KEY=your-secret-key-here
-ALLOWED_ORIGINS=https://yourdomain.com
+HYBRIDRAG_API_KEY=your-api-key-here
+CORS_ORIGINS=https://yourdomain.com
+HYBRIDRAG_RATE_LIMIT_PER_WINDOW=60
+HYBRIDRAG_RATE_LIMIT_WINDOW_SECONDS=60
 
 # Performance
 LOG_LEVEL=INFO
@@ -241,6 +235,17 @@ MAX_CONCURRENT_REQUESTS=10
   }
 }
 ```
+
+## Release Validation
+
+Before publish, the blessed stack should pass:
+
+```bash
+make release-gate-fast
+make release-gate-live
+```
+
+`release-gate-live` is designed for real seeded validation against `atlas-local:preview`, Voyage, and an OpenAI-compatible generation endpoint.
 
 ## Monitoring & Observability
 
@@ -345,7 +350,7 @@ from pydantic import BaseModel, validator
 class QueryRequest(BaseModel):
     query: str
     session_id: str
-    
+
     @validator('query')
     def validate_query(cls, v):
         if len(v) > 10000:
@@ -444,5 +449,3 @@ HybridRAG stores all state in MongoDB, so backups cover:
 - [Installation Guide](installation.md) - Set up HybridRAG
 - [Configuration Guide](configuration.md) - Configure settings
 - [API Reference](api.md) - Use the Python SDK
-
-

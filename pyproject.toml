@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mongodb-hybridrag"
 version = "0.3.0"
-description = "State-of-the-art RAG system with MongoDB Atlas and Voyage AI"
+description = "MongoDB-native AI application starter with hybrid search, graphs, and live validation"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.11"

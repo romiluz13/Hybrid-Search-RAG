@@ -12,26 +12,34 @@ from pymongo import AsyncMongoClient
 
 from hybridrag.config import Settings, get_settings
 
-DEFAULT_LOCAL_MONGODB_URI = "mongodb://localhost:27017/?directConnection=true"
+DEFAULT_LOCAL_MONGODB_URI = "mongodb://localhost:27018/?directConnection=true"
+FALLBACK_LOCAL_MONGODB_URI = "mongodb://localhost:27017/?directConnection=true"
 
 
-def _local_mongodb_is_available() -> bool:
-    """Return True when a local MongoDB server is reachable."""
+def _local_mongodb_is_available(port: int) -> bool:
+    """Return True when a local MongoDB server is reachable on the given port."""
     try:
-        with socket.create_connection(("localhost", 27017), timeout=1):
+        with socket.create_connection(("localhost", port), timeout=1):
             return True
     except OSError:
         return False
 
 
 def _resolve_test_mongodb_uri() -> str:
-    """Resolve the MongoDB URI for test runs."""
-    return (
-        os.getenv("HYBRIDRAG_TEST_MONGODB_URI")
-        or (DEFAULT_LOCAL_MONGODB_URI if _local_mongodb_is_available() else None)
-        or os.getenv("MONGODB_URI")
-        or DEFAULT_LOCAL_MONGODB_URI
-    )
+    """Resolve the MongoDB URI for test runs.
+
+    Prefer Atlas Local Preview on 27018, then fall back to a generic local MongoDB.
+    """
+    if os.getenv("HYBRIDRAG_TEST_MONGODB_URI"):
+        return os.getenv("HYBRIDRAG_TEST_MONGODB_URI") or DEFAULT_LOCAL_MONGODB_URI
+
+    if _local_mongodb_is_available(27018):
+        return DEFAULT_LOCAL_MONGODB_URI
+
+    if _local_mongodb_is_available(27017):
+        return FALLBACK_LOCAL_MONGODB_URI
+
+    return os.getenv("MONGODB_URI") or DEFAULT_LOCAL_MONGODB_URI
 
 
 @pytest.fixture
@@ -40,16 +48,16 @@ def require_mongodb_uri() -> None:
     if os.getenv("HYBRIDRAG_TEST_MONGODB_URI") or os.getenv("MONGODB_URI"):
         return
 
-    if _local_mongodb_is_available():
+    if _local_mongodb_is_available(27018) or _local_mongodb_is_available(27017):
         return
 
     try:
-        with socket.create_connection(("localhost", 27017), timeout=1):
+        with socket.create_connection(("localhost", 27018), timeout=1):
             return
     except OSError as exc:
         pytest.fail(
             "No MongoDB test URI provided and no local MongoDB found on "
-            f"localhost:27017 ({exc})"
+            f"localhost:27018 ({exc})"
         )
 
 

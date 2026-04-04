@@ -9,11 +9,11 @@
 ╚═╝  ╚═╝   ╚═╝   ╚═════╝ ╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝
 ```
 
-# The Atomic RAG Boilerplate
+# MongoDB-Native AI Starter
 
-### **MongoDB 8.2 Native • $rankFusion • Lexical Prefilters • Knowledge Graph**
+### **Backend-First • MongoDB 8.2 Native • Hybrid Search • Knowledge Graph**
 
-**Stop syncing 4 databases. Store vectors, graphs, and docs in one ACID-compliant MongoDB document.**
+**HybridRAG is a backend-first Python starter for MongoDB-native AI applications with real live validation on a blessed stack.**
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -90,23 +90,34 @@
 | **Dynamic numCandidates** | Auto-tuned (top_k × 20) |
 | **scoreDetails** | Per-pipeline score debugging |
 | **Explicit Weights** | Configurable vector/text weights |
-| **Graceful Fallback** | Auto-degrades for older MongoDB |
+| **Fail-Fast Support** | Explicit capability errors on the blessed stack |
 
 </td>
 </tr>
 </table>
 
-### 🔌 Integrations
+### 🔌 Blessed Stack
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  EMBEDDINGS       │  LLM PROVIDERS    │  OBSERVABILITY   │  UI           │
+│  DATABASE         │  EMBEDDINGS       │  LLM             │  SURFACE      │
 │  ────────────     │  ─────────────    │  ────────────    │  ──           │
-│  ✓ Voyage AI      │  ✓ Claude         │  ✓ Langfuse      │  ✓ Chainlit   │
-│  ✓ voyage-4-large │  ✓ GPT-4          │  ✓ RAGAS Eval    │  ✓ Rich CLI   │
-│  ✓ Reranking      │  ✓ Gemini         │                  │  ✓ REST API   │
+│  ✓ MongoDB 8.2+   │  ✓ Voyage AI      │  ✓ OpenAI API    │  ✓ Python API │
+│  ✓ atlas-local    │  ✓ voyage-4-large │  ✓ Compatible    │  ✓ REST API   │
+│  ✓ Atlas cloud    │  ✓ Reranking      │    endpoints     │  ✓ Rich CLI   │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+### One Supported Story
+
+HybridRAG supports multiple integrations internally, but the public reference path is intentionally narrow:
+
+- **MongoDB:** Atlas 8.2+ or `mongodb/mongodb-atlas-local:preview` on `mongodb://localhost:27018/?directConnection=true`
+- **Embeddings/Rerank:** Voyage
+- **LLM:** OpenAI API or an OpenAI-compatible endpoint
+- **Product shape:** Python library + FastAPI + CLI
+
+That is the stack exercised by the release gate. Unsupported capabilities on this path should fail explicitly rather than silently degrading.
 
 ---
 
@@ -255,9 +266,46 @@ cat > .env << EOF
 MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net
 MONGODB_DATABASE=hybridrag
 VOYAGE_API_KEY=pa-xxxxxxxxxxxxx
-ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxx
+OPENAI_API_KEY=sk-xxxxxxxxxxxxx
 EOF
 ```
+
+### Canonical Query Paths
+
+```python
+# Simple answer
+answer = await rag.query("How does hybrid search work?", mode="mix")
+
+# Source-aware response
+result = await rag.query_with_sources(
+    "How does hybrid search work?",
+    mode="mix",
+    top_k=5,
+)
+print(result["answer"])
+print(result["references"])
+
+# Streaming response
+stream = await rag.stream_query(
+    "What should a production RAG boilerplate expose?",
+    mode="mix",
+    include_context=True,
+    include_references=True,
+)
+async for chunk in stream["response_iterator"]:
+    print(chunk, end="")
+```
+
+### Release Gate
+
+The repo is considered publish-ready only when the blessed stack passes:
+
+- fast PR checks
+- API contract tests
+- example smoke tests
+- deterministic live seeded validation on `atlas-local:preview`
+- no skipped release tests
+- no silent fallback on the blessed path
 
 ### Basic Usage
 

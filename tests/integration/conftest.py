@@ -4,7 +4,6 @@ Integration test configuration.
 Provides fixtures for integration tests that require MongoDB connection.
 """
 
-import json
 import os
 import uuid
 
@@ -16,29 +15,25 @@ from hybridrag.config import get_settings
 from tests.conftest import _create_test_client, _resolve_test_mongodb_uri
 
 
-def _grove_llm_overrides() -> dict:
-    """Build settings overrides for Grove Gateway LLM, if configured.
+def _openai_llm_overrides(base_settings) -> dict:
+    """Build blessed-stack LLM overrides for integration tests.
 
-    Returns empty dict if GROVE_API_KEY is not set, allowing tests to fall
-    back to enable_llm=False (retrieval-only mode).
+    If OPENAI_API_KEY is not set, integration tests fall back to retrieval-only mode.
+    For OpenAI-compatible gateways, set OPENAI_BASE_URL and OPENAI_EXTRA_HEADERS.
     """
-    grove_key = os.getenv("GROVE_API_KEY")
-    if not grove_key:
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if not openai_key:
         return {"enable_llm": False}
-
-    grove_base = os.getenv(
-        "GROVE_BASE_URL",
-        "https://grove-gateway-prod.azure-api.net/grove-foundry-prod/openai/v1",
-    )
-    grove_model = os.getenv("GROVE_MODEL", "gpt-5.4")
 
     return {
         "enable_llm": True,
         "llm_provider": "openai",
-        "openai_api_key": SecretStr(grove_key),
-        "openai_model": grove_model,
-        "openai_base_url": grove_base,
-        "openai_extra_headers": json.dumps({"api-key": grove_key}),
+        "openai_api_key": SecretStr(openai_key),
+        "openai_model": os.getenv("OPENAI_MODEL", base_settings.openai_model),
+        "openai_base_url": os.getenv("OPENAI_BASE_URL", base_settings.openai_base_url),
+        "openai_extra_headers": os.getenv(
+            "OPENAI_EXTRA_HEADERS", base_settings.openai_extra_headers
+        ),
     }
 
 
@@ -47,7 +42,7 @@ async def rag(require_mongodb_uri, tmp_path):
     """
     Create HybridRAG instance for integration tests.
 
-    Uses real MongoDB (atlas-local) and optionally real LLM (Grove Gateway).
+    Uses real MongoDB (atlas-local) and optionally a real OpenAI-compatible LLM.
     """
     base_settings = get_settings()
     # Each test gets a unique database to avoid cross-test contamination
@@ -56,7 +51,7 @@ async def rag(require_mongodb_uri, tmp_path):
         "mongodb_uri": SecretStr(_resolve_test_mongodb_uri()),
         "mongodb_database": test_db,
         "mongodb_workspace": "test",
-        **_grove_llm_overrides(),
+        **_openai_llm_overrides(base_settings),
     }
     settings = base_settings.model_copy(update=overrides)
 

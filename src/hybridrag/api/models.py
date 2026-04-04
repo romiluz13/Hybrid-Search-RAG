@@ -75,6 +75,10 @@ class QueryRequest(BaseModel):
         default=False,
         description="Include structured source references in response",
     )
+    stream: bool = Field(
+        default=False,
+        description="Stream the answer as NDJSON chunks instead of returning one JSON payload",
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -95,6 +99,16 @@ class QueryResponse(BaseModel):
     context: str | None = None
     references: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class QueryStreamChunk(BaseModel):
+    """NDJSON chunk emitted by the streaming query endpoint."""
+
+    answer: str | None = None
+    context: str | None = None
+    references: list[dict[str, Any]] | None = None
+    metadata: dict[str, Any] | None = None
+    error: str | None = None
 
 
 class HealthResponse(BaseModel):

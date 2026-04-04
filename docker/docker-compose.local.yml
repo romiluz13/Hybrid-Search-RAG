@@ -1,17 +1,19 @@
 # Docker Compose for Local MongoDB Atlas Development
-# Uses mongodb-atlas-local image which provides Atlas Search + Vector Search locally.
+# Uses atlas-local preview so the blessed local stack matches MongoDB 8.2+ hybrid search.
+# MongoDB docs source of truth:
+# https://www.mongodb.com/docs/atlas/cli/current/atlas-cli-deploy-docker/
 # NOTE: atlas-local ignores MONGODB_INITDB_ROOT_* env vars -- it runs without auth.
-# Usage: docker-compose -f docker/docker-compose.local.yml up -d
+# Usage: docker compose -f docker/docker-compose.local.yml up -d
 
 version: '3.8'
 
 services:
   mongodb:
-    image: mongodb/mongodb-atlas-local:8.0
-    container_name: hybridrag-mongodb-local
+    image: mongodb/mongodb-atlas-local:preview
+    container_name: hybridrag-mongodb-atlas-local-preview
     restart: unless-stopped
     ports:
-      - "127.0.0.1:27017:27017"
+      - "127.0.0.1:27018:27017"
     environment:
       - MONGODB_INITDB_DATABASE=hybridrag
     volumes:
@@ -37,10 +39,10 @@ networks:
     driver: bridge
 
 # Connection URI for .env:
-# MONGODB_URI=mongodb://localhost:27017/?directConnection=true
+# MONGODB_URI=mongodb://localhost:27018/?directConnection=true
 #
 # Quick Commands:
-# Start:    docker-compose -f docker/docker-compose.local.yml up -d
-# Stop:     docker-compose -f docker/docker-compose.local.yml down
-# Logs:     docker-compose -f docker/docker-compose.local.yml logs -f
-# Destroy:  docker-compose -f docker/docker-compose.local.yml down -v
+# Start:    docker compose -f docker/docker-compose.local.yml up -d
+# Stop:     docker compose -f docker/docker-compose.local.yml down
+# Logs:     docker compose -f docker/docker-compose.local.yml logs -f
+# Destroy:  docker compose -f docker/docker-compose.local.yml down -v

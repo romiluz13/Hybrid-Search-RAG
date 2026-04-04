@@ -1,6 +1,9 @@
 """Tests for inline source handling and reference synthesis."""
 
-from hybridrag.core.rag import _build_inline_file_paths, _extract_references_from_query_data
+from hybridrag.core.rag import (
+    _build_inline_file_paths,
+    _extract_references_from_query_data,
+)
 
 
 def test_build_inline_file_paths_uses_stable_hashes_without_ids():

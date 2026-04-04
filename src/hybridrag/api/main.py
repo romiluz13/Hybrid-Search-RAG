@@ -10,13 +10,16 @@ Production-ready API with:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from ..core.mongodb_client import close_shared_client
 from ..core.rag import HybridRAG, create_hybridrag
@@ -27,6 +30,7 @@ from .models import (
     IngestResponse,
     QueryRequest,
     QueryResponse,
+    QueryStreamChunk,
 )
 
 if TYPE_CHECKING:
@@ -38,6 +42,51 @@ __version__ = "0.2.0"
 
 # Global RAG instance
 _rag: HybridRAG | None = None
+_rate_limit_state: dict[str, list[float]] = {}
+
+
+def _get_api_key() -> str | None:
+    return os.environ.get("HYBRIDRAG_API_KEY")
+
+
+def _get_rate_limit_per_window() -> int:
+    return int(os.environ.get("HYBRIDRAG_RATE_LIMIT_PER_WINDOW", "0"))
+
+
+def _get_rate_limit_window_seconds() -> int:
+    return int(os.environ.get("HYBRIDRAG_RATE_LIMIT_WINDOW_SECONDS", "60"))
+
+
+async def guard_request(
+    request: Request,
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> None:
+    """Optional auth and rate-limit seam for the public reference API."""
+    required_api_key = _get_api_key()
+    if required_api_key and x_api_key != required_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or missing X-API-Key",
+        )
+
+    rate_limit = _get_rate_limit_per_window()
+    if rate_limit <= 0:
+        return
+
+    window_seconds = _get_rate_limit_window_seconds()
+    client_host = request.client.host if request.client else "unknown"
+    now = time.time()
+    recent_requests = _rate_limit_state.setdefault(client_host, [])
+    cutoff = now - window_seconds
+    recent_requests[:] = [stamp for stamp in recent_requests if stamp >= cutoff]
+
+    if len(recent_requests) >= rate_limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded for this API instance",
+        )
+
+    recent_requests.append(now)
 
 
 def get_rag() -> HybridRAG:
@@ -88,7 +137,7 @@ def create_app() -> FastAPI:
         allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-API-Key"],
     )
 
     # Register routes
@@ -142,6 +191,7 @@ def register_routes(app: FastAPI) -> None:
     @app.post(
         "/v1/ingest",
         response_model=IngestResponse,
+        dependencies=[Depends(guard_request)],
         responses={
             400: {"model": ErrorResponse},
             500: {"model": ErrorResponse},
@@ -190,6 +240,7 @@ def register_routes(app: FastAPI) -> None:
     @app.post(
         "/v1/query",
         response_model=QueryResponse,
+        dependencies=[Depends(guard_request)],
         responses={
             400: {"model": ErrorResponse},
             500: {"model": ErrorResponse},
@@ -210,6 +261,12 @@ def register_routes(app: FastAPI) -> None:
         - **bypass**: Skip retrieval, direct LLM
         """
         rag = get_rag()
+
+        if request.stream:
+            raise HTTPException(
+                status_code=400,
+                detail="Use /v1/query/stream when stream=true",
+            )
 
         try:
             if request.include_context or request.include_references:
@@ -250,6 +307,8 @@ def register_routes(app: FastAPI) -> None:
                         "rerank_top_k": request.rerank_top_k,
                     },
                 )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
         except Exception as e:
             # M34: Do not leak internal exception details to API callers
             logger.error(f"Query error: {e}", exc_info=True)
@@ -258,8 +317,82 @@ def register_routes(app: FastAPI) -> None:
                 detail="Internal server error during query",
             ) from None
 
+    @app.post(
+        "/v1/query/stream",
+        dependencies=[Depends(guard_request)],
+        tags=["query"],
+        responses={
+            200: {
+                "description": "NDJSON stream of metadata followed by answer chunks",
+                "content": {
+                    "application/x-ndjson": {
+                        "schema": QueryStreamChunk.model_json_schema()
+                    }
+                },
+            },
+            500: {"model": ErrorResponse},
+            503: {"model": ErrorResponse},
+        },
+    )
+    async def stream_query(request: QueryRequest) -> StreamingResponse:
+        """Stream a query response as NDJSON with metadata first."""
+        rag = get_rag()
+
+        try:
+            result = await rag.stream_query(
+                query=request.query,
+                mode=request.mode,
+                top_k=request.top_k,
+                rerank_top_k=request.rerank_top_k,
+                enable_rerank=request.enable_rerank,
+                include_context=request.include_context,
+                include_references=request.include_references,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        except Exception as e:
+            logger.error(f"Streaming query error: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail="Internal server error during streaming query",
+            ) from None
+
+        async def stream_generator():
+            envelope = {
+                "metadata": {
+                    "mode": result["mode"],
+                    "top_k": request.top_k,
+                    "rerank_top_k": request.rerank_top_k,
+                    **result.get("metadata", {}),
+                }
+            }
+            if request.include_context:
+                envelope["context"] = result.get("context")
+            if request.include_references:
+                envelope["references"] = result.get("references", [])
+            yield json.dumps(envelope) + "\n"
+
+            try:
+                async for chunk in result["response_iterator"]:
+                    if chunk:
+                        yield json.dumps({"answer": chunk}) + "\n"
+            except Exception as e:
+                logger.error(f"Streaming response failure: {e}", exc_info=True)
+                yield json.dumps({"error": "Streaming response interrupted"}) + "\n"
+
+        return StreamingResponse(
+            stream_generator(),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     @app.delete(
         "/v1/documents/{doc_id}",
+        dependencies=[Depends(guard_request)],
         responses={
             400: {"model": ErrorResponse},
             404: {"model": ErrorResponse},

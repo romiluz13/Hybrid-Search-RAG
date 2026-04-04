@@ -11,23 +11,23 @@ from hybridrag import create_hybridrag
 async def main():
     # Initialize HybridRAG (auto-initializes by default)
     rag = await create_hybridrag()
-    
+
     # Ingest documents from folder (uses Docling processor)
     results = await rag.ingest_files("path/to/documents/")
-    
+
     # Or insert raw text directly
     await rag.insert(["Document 1 content...", "Document 2 content..."])
-    
+
     # Create conversation session
     session_id = await rag.create_conversation_session()
-    
+
     # Query with memory
     result = await rag.query_with_memory(
         query="What are the key findings?",
         session_id=session_id,
         mode="mix",
     )
-    
+
     print(result["answer"])
 
 asyncio.run(main())
@@ -50,7 +50,7 @@ await rag.initialize()
 settings = Settings(
     mongodb_database="my_database",
     voyage_embedding_model="voyage-3-large",
-    llm_provider="anthropic",
+    llm_provider="openai",
 )
 rag = HybridRAG(settings=settings)
 await rag.initialize()
@@ -237,7 +237,7 @@ print(f"Ingested {successful}/{len(results)} pages, {total_chunks} total chunks"
   - Access forbidden
   - No pages extracted
 
-##### `query(query: str, mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None = None, top_k: int | None = None, rerank_top_k: int | None = None, enable_rerank: bool | None = None, only_context: bool = False, system_prompt: str | None = None) -> str`
+##### `query(query: str, mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None = None, top_k: int | None = None, rerank_top_k: int | None = None, enable_rerank: bool | None = None, only_context: bool = False, system_prompt: str | None = None, stream: bool = False) -> str | AsyncIterator[str]`
 
 Query without conversation memory.
 
@@ -259,6 +259,15 @@ context = await rag.query(
     query="What is this document about?",
     only_context=True,
 )
+
+# Stream answer chunks from the blessed stack
+stream = await rag.query(
+    query="What should a production RAG starter expose?",
+    mode="mix",
+    stream=True,
+)
+async for chunk in stream:
+    print(chunk, end="")
 ```
 
 **Parameters:**
@@ -269,8 +278,9 @@ context = await rag.query(
 - `enable_rerank` (bool | None): Whether to enable reranking (default: True)
 - `only_context` (bool): If True, return only context without LLM response
 - `system_prompt` (str | None): Optional system prompt for LLM
+- `stream` (bool): If True, return an async iterator of answer chunks
 
-**Returns:** Generated response string (or context string if `only_context=True`)
+**Returns:** Generated response string, context string, or an async iterator when `stream=True`
 
 ##### `query_with_sources(query: str, mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None = None, top_k: int | None = None) -> dict[str, Any]`
 
@@ -291,7 +301,26 @@ result = await rag.query_with_sources(
     "context": "Retrieved context text...",
     "query": "What is this document about?",
     "mode": "mix",
+    "references": [{"reference_id": "ref-1", "file_path": "inline://doc-1"}],
+    "metadata": {"query_mode": "mix"},
 }
+```
+
+##### `stream_query(query: str, mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None = None, top_k: int | None = None, rerank_top_k: int | None = None, enable_rerank: bool | None = None, include_context: bool = False, include_references: bool = True) -> dict[str, Any]`
+
+Canonical streaming helper for the backend-first reference surface.
+
+```python
+result = await rag.stream_query(
+    query="What should a production RAG starter expose?",
+    mode="mix",
+    include_context=True,
+    include_references=True,
+)
+
+print(result["references"])
+async for chunk in result["response_iterator"]:
+    print(chunk, end="")
 ```
 
 ##### `query_with_memory(query: str, session_id: str, mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None = None, top_k: int | None = None, max_history_messages: int = 10) -> dict[str, Any]`
@@ -426,41 +455,41 @@ settings = Settings(
     mongodb_uri=SecretStr("mongodb+srv://..."),
     mongodb_database="hybridrag",
     mongodb_workspace="default",
-    
+
     # Voyage AI (required for embeddings)
     voyage_api_key=SecretStr("pa-..."),
     voyage_embedding_model="voyage-3-large",
     voyage_context_model="voyage-context-3",
     voyage_rerank_model="rerank-2.5",
-    
-    # LLM Provider (choose one)
-    llm_provider="anthropic",  # or "openai", "gemini"
-    anthropic_api_key=SecretStr("sk-ant-..."),
-    anthropic_model="claude-sonnet-4-20250514",
-    
+
+    # Blessed-stack LLM provider
+    llm_provider="openai",
+    openai_api_key=SecretStr("sk-..."),
+    openai_model="gpt-5.4",
+
     # Query defaults
     default_query_mode="mix",
     default_top_k=60,
     default_rerank_top_k=10,
     enable_rerank=True,
-    
+
     # Enhancements
     enable_implicit_expansion=True,
     implicit_expansion_threshold=0.75,
     implicit_expansion_max=10,
     enable_entity_boosting=True,
     entity_boost_weight=0.2,
-    
+
     # Embedding settings
     embedding_dim=1024,
     max_token_size=4096,
     embedding_batch_size=128,
-    
+
     # Context limits
     max_token_for_text_unit=4000,
     max_token_for_local_context=4000,
     max_token_for_global_context=4000,
-    
+
     # Observability (optional)
     langfuse_public_key="pk-lf-...",
     langfuse_secret_key=SecretStr("sk-lf-..."),
@@ -594,27 +623,27 @@ from hybridrag import create_hybridrag
 async def main():
     # Initialize (auto-initializes by default)
     rag = await create_hybridrag()
-    
+
     # Ingest documents from folder
     print("Ingesting documents...")
     results = await rag.ingest_files("research_papers/")
     print(f"Ingested {len(results)} documents")
-    
+
     # Create session
     session_id = await rag.create_conversation_session()
-    
+
     # Query loop
     while True:
         query = input("\nQuery (or 'exit'): ")
         if query.lower() == "exit":
             break
-        
+
         result = await rag.query_with_memory(
             query=query,
             session_id=session_id,
             mode="mix",
         )
-        
+
         print(f"\nAnswer: {result['answer']}")
         print(f"\nContext length: {len(result.get('context', ''))} chars")
         print(f"History used: {result.get('history_used', 0)} messages")
@@ -627,19 +656,19 @@ asyncio.run(main())
 ```python
 async def handle_user_query(user_id: str, query: str):
     rag = await create_hybridrag()
-    
+
     # Create or reuse user session
     session_id = await rag.create_conversation_session(
         session_id=user_id,
         metadata={"user_id": user_id},
     )
-    
+
     result = await rag.query_with_memory(
         query=query,
         session_id=session_id,
         mode="mix",
     )
-    
+
     return result["answer"]
 ```
 
@@ -649,4 +678,3 @@ async def handle_user_query(user_id: str, query: str):
 - [Configuration Guide](configuration.md) - Configure settings
 - [Query Modes](query-modes.md) - Understand query modes
 - [Deployment Guide](deployment.md) - Deploy to production
-

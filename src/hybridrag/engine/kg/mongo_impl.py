@@ -51,6 +51,30 @@ def get_collection_name(workspace: str | None, base_name: str) -> str:
     return base_name
 
 
+def resolve_workspace(explicit_workspace: str | None) -> str:
+    """Resolve workspace deterministically.
+
+    For publish-grade live validation, explicit runtime configuration must win.
+    Environment state is too easy to leak across shells and test runs. If a
+    caller passes a workspace, including the empty string, use that exact value.
+    Only fall back to ``MONGODB_WORKSPACE`` when no workspace was provided.
+    """
+    if explicit_workspace is not None:
+        resolved = explicit_workspace.strip()
+        if resolved:
+            logger.debug(f"Using explicit workspace parameter: '{resolved}'")
+        else:
+            logger.debug("Using explicit empty workspace parameter")
+        return resolved
+
+    env_workspace = os.environ.get("MONGODB_WORKSPACE", "").strip()
+    if env_workspace:
+        logger.info(
+            f"Using MONGODB_WORKSPACE environment variable fallback: '{env_workspace}'"
+        )
+    return env_workspace
+
+
 # Graph traversal mode: "bidirectional" or "in_out_bound"
 # Can be overridden via MONGO_GRAPH_BFS_MODE environment variable
 GRAPH_BFS_MODE = os.getenv("MONGO_GRAPH_BFS_MODE", "bidirectional")
@@ -152,22 +176,7 @@ class MongoKVStorage(BaseKVStorage):
         self.__post_init__()
 
     def __post_init__(self):
-        # Check for MONGODB_WORKSPACE environment variable first (higher priority)
-        # This allows administrators to force a specific workspace for all MongoDB storage instances
-        mongodb_workspace = os.environ.get("MONGODB_WORKSPACE")
-        if mongodb_workspace and mongodb_workspace.strip():
-            # Use environment variable value, overriding the passed workspace parameter
-            effective_workspace = mongodb_workspace.strip()
-            logger.info(
-                f"Using MONGODB_WORKSPACE environment variable: '{effective_workspace}' (overriding passed workspace: '{self.workspace}')"
-            )
-        else:
-            # Use the workspace parameter passed during initialization
-            effective_workspace = self.workspace
-            if effective_workspace:
-                logger.debug(
-                    f"Using passed workspace parameter: '{effective_workspace}'"
-                )
+        effective_workspace = resolve_workspace(self.workspace)
 
         # Build final_namespace with workspace prefix for data isolation
         # Keep original namespace unchanged for type detection logic
@@ -380,22 +389,7 @@ class MongoDocStatusStorage(DocStatusStorage):
         self.__post_init__()
 
     def __post_init__(self):
-        # Check for MONGODB_WORKSPACE environment variable first (higher priority)
-        # This allows administrators to force a specific workspace for all MongoDB storage instances
-        mongodb_workspace = os.environ.get("MONGODB_WORKSPACE")
-        if mongodb_workspace and mongodb_workspace.strip():
-            # Use environment variable value, overriding the passed workspace parameter
-            effective_workspace = mongodb_workspace.strip()
-            logger.info(
-                f"Using MONGODB_WORKSPACE environment variable: '{effective_workspace}' (overriding passed workspace: '{self.workspace}')"
-            )
-        else:
-            # Use the workspace parameter passed during initialization
-            effective_workspace = self.workspace
-            if effective_workspace:
-                logger.debug(
-                    f"Using passed workspace parameter: '{effective_workspace}'"
-                )
+        effective_workspace = resolve_workspace(self.workspace)
 
         # Build final_namespace with workspace prefix for data isolation
         # Keep original namespace unchanged for type detection logic
@@ -808,22 +802,7 @@ class MongoGraphStorage(BaseGraphStorage):
             global_config=global_config,
             embedding_func=embedding_func,
         )
-        # Check for MONGODB_WORKSPACE environment variable first (higher priority)
-        # This allows administrators to force a specific workspace for all MongoDB storage instances
-        mongodb_workspace = os.environ.get("MONGODB_WORKSPACE")
-        if mongodb_workspace and mongodb_workspace.strip():
-            # Use environment variable value, overriding the passed workspace parameter
-            effective_workspace = mongodb_workspace.strip()
-            logger.info(
-                f"Using MONGODB_WORKSPACE environment variable: '{effective_workspace}' (overriding passed workspace: '{self.workspace}')"
-            )
-        else:
-            # Use the workspace parameter passed during initialization
-            effective_workspace = self.workspace
-            if effective_workspace:
-                logger.debug(
-                    f"Using passed workspace parameter: '{effective_workspace}'"
-                )
+        effective_workspace = resolve_workspace(self.workspace)
 
         # Build final_namespace with workspace prefix for data isolation
         # Keep original namespace unchanged for type detection logic
@@ -2263,22 +2242,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
         self.__post_init__()
 
     def __post_init__(self):
-        # Check for MONGODB_WORKSPACE environment variable first (higher priority)
-        # This allows administrators to force a specific workspace for all MongoDB storage instances
-        mongodb_workspace = os.environ.get("MONGODB_WORKSPACE")
-        if mongodb_workspace and mongodb_workspace.strip():
-            # Use environment variable value, overriding the passed workspace parameter
-            effective_workspace = mongodb_workspace.strip()
-            logger.info(
-                f"Using MONGODB_WORKSPACE environment variable: '{effective_workspace}' (overriding passed workspace: '{self.workspace}')"
-            )
-        else:
-            # Use the workspace parameter passed during initialization
-            effective_workspace = self.workspace
-            if effective_workspace:
-                logger.debug(
-                    f"Using passed workspace parameter: '{effective_workspace}'"
-                )
+        effective_workspace = resolve_workspace(self.workspace)
 
         # Build final_namespace with workspace prefix for data isolation
         # Keep original namespace unchanged for type detection logic

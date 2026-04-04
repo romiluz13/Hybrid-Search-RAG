@@ -56,9 +56,14 @@ jobs:
           pytest tests/ -v \
             --ignore=tests/integration/ \
             --ignore=tests/benchmarks/ \
+            --ignore=tests/e2e_real_test.py \
             --cov=src/hybridrag \
             --cov-report=xml \
             --cov-report=term
+
+      - name: Run example and API smoke tests
+        run: |
+          pytest tests/examples/ tests/api/test_query_api_features.py -v
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -72,6 +77,11 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    services:
+      mongodb:
+        image: mongodb/mongodb-atlas-local:preview
+        ports:
+          - 27018:27017
     steps:
       - uses: actions/checkout@v4
 
@@ -87,9 +97,12 @@ jobs:
 
       - name: Run integration tests
         env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_URI: mongodb://localhost:27018/?directConnection=true
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-5.4
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_EXTRA_HEADERS: ${{ secrets.OPENAI_EXTRA_HEADERS }}
         run: |
           pytest tests/integration/ -v -m integration
 

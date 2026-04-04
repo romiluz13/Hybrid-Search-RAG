@@ -2,6 +2,15 @@
 
 Practical examples demonstrating HybridRAG capabilities.
 
+## Blessed Stack
+
+The canonical reference path for these examples is:
+
+- MongoDB Atlas 8.2+ or `mongodb/mongodb-atlas-local:preview` on `mongodb://localhost:27018/?directConnection=true`
+- Voyage for embeddings and rerank
+- OpenAI API or an OpenAI-compatible endpoint for LLM generation
+- Python library + REST API + CLI
+
 ## Quick Start
 
 ```bash
@@ -84,10 +93,9 @@ sophisticated agents on top of it.
 - **MongoDB Atlas**: Connection string for your cluster
 - **Voyage AI**: API key for embeddings and reranking
 
-### Optional API Keys (choose one LLM)
-- **Anthropic Claude**: Recommended for best results
-- **OpenAI GPT**: Alternative LLM provider
-- **Google Gemini**: Alternative LLM provider
+### Optional API Keys
+- **OpenAI API**: Canonical public LLM path for the blessed stack
+- **OpenAI-compatible endpoint**: Supported for live validation via `OPENAI_BASE_URL`
 
 ### MongoDB Atlas Setup
 1. Create a free cluster at [MongoDB Atlas](https://www.mongodb.com/atlas)
@@ -181,7 +189,10 @@ Set required environment variables:
 ```bash
 export MONGODB_URI="mongodb+srv://..."
 export VOYAGE_API_KEY="pa-..."
-export ANTHROPIC_API_KEY="sk-ant-..."  # Or other LLM
+export OPENAI_API_KEY="sk-..."
+# Optional for OpenAI-compatible gateways:
+# export OPENAI_BASE_URL="https://your-endpoint/v1"
+# export OPENAI_EXTRA_HEADERS='{"api-key":"..."}'
 ```
 
 ## More Resources

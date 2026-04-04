@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -50,6 +50,9 @@ class QueryParam:
     chunk_top_k: int = 10
     enable_rerank: bool = True
     only_need_context: bool = False
+    stream: bool = False
+    include_references: bool = False
+    response_type: str = "Multiple Paragraphs"
 
     def _to_internal(self) -> _QueryParam:
         """Convert to internal format."""
@@ -59,6 +62,9 @@ class QueryParam:
             chunk_top_k=self.chunk_top_k,
             enable_rerank=self.enable_rerank,
             only_need_context=self.only_need_context,
+            stream=self.stream,
+            include_references=self.include_references,
+            response_type=self.response_type,
         )
 
 
@@ -88,7 +94,9 @@ def _build_inline_file_paths(
     return inline_paths
 
 
-def _extract_references_from_query_data(query_data: dict[str, Any]) -> list[dict[str, str]]:
+def _extract_references_from_query_data(
+    query_data: dict[str, Any],
+) -> list[dict[str, str]]:
     """Return references from structured query data, synthesizing them when needed."""
     data = query_data.get("data", {})
     references = list(data.get("references", []))
@@ -138,16 +146,54 @@ def _extract_references_from_query_data(query_data: dict[str, Any]) -> list[dict
     return synthesized
 
 
-def _query_data_has_retrieval_content(query_data: dict[str, Any]) -> bool:
-    """Return True when structured query data contains usable retrieval output."""
-    data = query_data.get("data", {})
-    if data.get("chunks") or data.get("entities") or data.get("relationships"):
-        return True
+def _extract_context_from_query_data(query_data: dict[str, Any]) -> str:
+    """Return a best-effort readable context string from structured query output."""
+    explicit_context = query_data.get("context")
+    if isinstance(explicit_context, str) and explicit_context.strip():
+        return explicit_context
 
-    context = query_data.get("llm_response", {}).get("content") or query_data.get(
-        "context", ""
+    llm_context = query_data.get("llm_response", {}).get("content")
+    if isinstance(llm_context, str) and llm_context.strip():
+        return llm_context
+
+    chunks = query_data.get("data", {}).get("chunks", [])
+    chunk_text = [
+        str(chunk.get("content", "")).strip()
+        for chunk in chunks
+        if str(chunk.get("content", "")).strip()
+    ]
+    return "\n\n".join(chunk_text)
+
+
+def _extract_retrieval_diagnostics(query_data: dict[str, Any]) -> dict[str, Any]:
+    """Expose retrieval strategy details so fallback behavior is never silent."""
+    diagnostics: dict[str, Any] = {}
+    data = query_data.get("data", {})
+    chunks = data.get("chunks", [])
+    search_types = sorted(
+        {str(chunk.get("search_type")) for chunk in chunks if chunk.get("search_type")}
     )
-    return "[no-context]" not in context.lower()
+    if search_types:
+        diagnostics["search_types"] = search_types
+
+    fallback_search_types = [
+        search_type
+        for search_type in search_types
+        if "manual" in search_type
+        or "fallback" in search_type
+        or search_type in {"vector_only", "text_only"}
+    ]
+    if fallback_search_types:
+        diagnostics["fallback_search_types"] = fallback_search_types
+        diagnostics["fallback_used"] = True
+    elif search_types:
+        diagnostics["fallback_used"] = False
+    elif any(data.get(key) for key in ("chunks", "entities", "relationships")):
+        # Some retrieval paths do not annotate chunk-level search_type yet, but they
+        # still represent the primary blessed-stack path rather than a hidden fallback.
+        diagnostics["fallback_used"] = False
+
+    return diagnostics
 
 
 def _create_embedding_func(
@@ -526,8 +572,8 @@ class HybridRAG:
         total_chars = sum(len(d) for d in documents)
         logger.info("[INSERT] ========== Starting Document Insertion ==========")
         logger.info(f"[INSERT] Documents: {doc_count}, Total chars: {total_chars:,}")
-        resolved_file_paths = list(file_paths) if file_paths else _build_inline_file_paths(
-            documents, ids
+        resolved_file_paths = (
+            list(file_paths) if file_paths else _build_inline_file_paths(documents, ids)
         )
         logger.info(f"[INSERT] File paths: {resolved_file_paths}")
 
@@ -547,7 +593,9 @@ class HybridRAG:
             # Log to Langfuse if enabled
             if langfuse_enabled():
                 log_ingestion(
-                    file_name=resolved_file_paths[0] if resolved_file_paths else "unknown",
+                    file_name=resolved_file_paths[0]
+                    if resolved_file_paths
+                    else "unknown",
                     num_chunks=doc_count,
                     num_entities=0,  # Not tracked at this level
                     num_relations=0,  # Not tracked at this level
@@ -1372,7 +1420,8 @@ class HybridRAG:
         enable_rerank: bool | None = None,
         only_context: bool = False,
         system_prompt: str | None = None,
-    ) -> str:
+        stream: bool = False,
+    ) -> str | AsyncIterator[str]:
         """
         Query the RAG system.
 
@@ -1384,9 +1433,10 @@ class HybridRAG:
             enable_rerank: Whether to enable reranking
             only_context: If True, return only context without LLM response
             system_prompt: Optional system prompt for LLM
+            stream: If True, return an async iterator of response chunks
 
         Returns:
-            Generated response or context string
+            Generated response, context string, or streaming iterator
         """
         rag = self._ensure_initialized()
 
@@ -1415,7 +1465,7 @@ class HybridRAG:
             f"[QUERY] Mode: {resolved_mode}, top_k: {resolved_top_k}, rerank_top_k: {resolved_rerank_top_k}"
         )
         logger.info(
-            f"[QUERY] Rerank enabled: {resolved_enable_rerank}, only_context: {only_context}"
+            f"[QUERY] Rerank enabled: {resolved_enable_rerank}, only_context: {only_context}, stream: {stream}"
         )
 
         # Apply implicit expansion if enabled
@@ -1432,9 +1482,13 @@ class HybridRAG:
             chunk_top_k=resolved_rerank_top_k,
             enable_rerank=resolved_enable_rerank,
             only_need_context=only_context,
+            stream=stream,
         )
 
         try:
+            if stream and only_context:
+                raise ValueError("Streaming is not supported when only_context=True")
+
             if only_context:
                 result = await self.query_data(
                     query=expanded_query,
@@ -1449,6 +1503,10 @@ class HybridRAG:
                 return context
 
             if not self.settings.enable_llm:
+                if stream:
+                    raise ValueError(
+                        "Streaming requires enable_llm=True on the blessed stack"
+                    )
                 logger.info(
                     "[QUERY] LLM disabled, returning retrieved context instead of generation"
                 )
@@ -1470,6 +1528,11 @@ class HybridRAG:
                 param=param._to_internal(),  # Convert to internal QueryParam
                 system_prompt=system_prompt,
             )
+
+            if stream and response is not None and not isinstance(response, str):
+                logger.info("[QUERY] Streaming response iterator returned")
+                logger.info("[QUERY] ========== Query Complete ==========")
+                return response
 
             # Handle None response gracefully
             if response is None:
@@ -1514,26 +1577,11 @@ class HybridRAG:
         )
 
         result = await rag.aquery_llm(query=query, param=param._to_internal())
-        if (
-            not self.settings.enable_llm
-            and resolved_mode in {"local", "global", "hybrid"}
-            and not _query_data_has_retrieval_content(result)
-        ):
-            logger.info(
-                "[QUERY_DATA] Retrieval-only mode produced no KG context for "
-                f"mode={resolved_mode}; retrying with mode=mix"
-            )
-            fallback_param = QueryParam(
-                mode="mix",
-                top_k=resolved_top_k,
-                chunk_top_k=resolved_rerank_top_k,
-                enable_rerank=resolved_enable_rerank,
-                only_need_context=True,
-            )
-            result = await rag.aquery_llm(query=query, param=fallback_param._to_internal())
-
         data = dict(result)
-        data["context"] = result.get("llm_response", {}).get("content") or ""
+        data["context"] = _extract_context_from_query_data(result)
+        metadata = dict(result.get("metadata", {}))
+        metadata.update(_extract_retrieval_diagnostics(result))
+        data["metadata"] = metadata
         return data
 
     async def query_with_sources(
@@ -1625,6 +1673,75 @@ Please provide a comprehensive answer based only on the information provided in 
             "mode": resolved_mode,
             "references": references,
             "metadata": metadata,
+        }
+
+    async def stream_query(
+        self,
+        query: str,
+        mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"]
+        | None = None,
+        top_k: int | None = None,
+        rerank_top_k: int | None = None,
+        enable_rerank: bool | None = None,
+        include_context: bool = False,
+        include_references: bool = True,
+        system_prompt: str | None = None,
+    ) -> dict[str, Any]:
+        """Return a streaming iterator plus source metadata for a query."""
+        rag = self._ensure_initialized()
+
+        if not self.settings.enable_llm:
+            raise ValueError("Streaming requires enable_llm=True on the blessed stack")
+
+        resolved_mode = mode or self.settings.default_query_mode
+        resolved_top_k = top_k or self.settings.default_top_k
+        resolved_rerank_top_k = rerank_top_k or self.settings.default_rerank_top_k
+        resolved_enable_rerank = (
+            enable_rerank if enable_rerank is not None else self.settings.enable_rerank
+        )
+
+        param = QueryParam(
+            mode=resolved_mode,
+            top_k=resolved_top_k,
+            chunk_top_k=resolved_rerank_top_k,
+            enable_rerank=resolved_enable_rerank,
+            stream=True,
+            include_references=include_references,
+        )
+        result = await rag.aquery_llm(
+            query=query,
+            param=param._to_internal(),
+            system_prompt=system_prompt,
+        )
+
+        llm_response = result.get("llm_response", {})
+        response_iterator = llm_response.get("response_iterator")
+
+        if not llm_response.get("is_streaming") or response_iterator is None:
+            content = llm_response.get("content") or ""
+
+            async def _single_chunk() -> AsyncIterator[str]:
+                if content:
+                    yield content
+
+            response_iterator = _single_chunk()
+
+        return {
+            "query": query,
+            "mode": resolved_mode,
+            "context": _extract_context_from_query_data(result)
+            if include_context
+            else None,
+            "references": (
+                _extract_references_from_query_data(result)
+                if include_references
+                else []
+            ),
+            "metadata": {
+                **result.get("metadata", {}),
+                **_extract_retrieval_diagnostics(result),
+            },
+            "response_iterator": response_iterator,
         }
 
     async def query_with_memory(
@@ -1839,6 +1956,7 @@ Provide a helpful, comprehensive answer."""
             "initialized": self._initialized,
             "working_dir": self.working_dir,
             "mongodb_database": self.settings.mongodb_database,
+            "mongodb_workspace": self.settings.mongodb_workspace,
             "llm_provider": self.settings.llm_provider,
             "llm_model": llm_model,
             "embedding_provider": self.settings.embedding_provider,
@@ -1846,6 +1964,27 @@ Provide a helpful, comprehensive answer."""
             "rerank_model": self.settings.voyage_rerank_model
             if self.settings.voyage_api_key
             else None,
+            "blessed_stack": {
+                "mongodb": "Atlas 8.2+ / atlas-local:preview",
+                "embedding": "Voyage",
+                "llm": "OpenAI-compatible API",
+                "shape": "backend-first",
+            },
+            "capabilities": {
+                "citations": True,
+                "streaming": True,
+                "conversation_memory": True,
+                "source_aware_queries": True,
+                "fail_fast": True,
+                "supported_query_modes": [
+                    "local",
+                    "global",
+                    "hybrid",
+                    "naive",
+                    "mix",
+                    "bypass",
+                ],
+            },
             "enhancements": {
                 "implicit_expansion": self.settings.enable_implicit_expansion,
                 "entity_boosting": self.settings.enable_entity_boosting,

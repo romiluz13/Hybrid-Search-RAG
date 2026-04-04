@@ -1048,7 +1048,7 @@ def reciprocal_rank_fusion(
             metadata=result.metadata,
             document_title=result.document_title,
             document_source=result.document_source,
-            search_type="hybrid_rrf",
+            search_type="hybrid_rrf_manual",
         )
         merged_results.append(merged_result)
 

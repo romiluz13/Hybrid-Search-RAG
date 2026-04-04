@@ -238,6 +238,16 @@ def query(
         help=f"Search mode: {', '.join(SUPPORTED_QUERY_MODES)}",
     ),
     top_k: int = typer.Option(10, "--top-k", "-k", help="Number of results"),
+    with_sources: bool = typer.Option(
+        False,
+        "--with-sources",
+        help="Return citations and source context using the canonical source-aware path",
+    ),
+    show_context: bool = typer.Option(
+        False,
+        "--show-context",
+        help="Print retrieved context when using --with-sources",
+    ),
 ):
     """
     Run a single query against the knowledge base.
@@ -257,14 +267,43 @@ def query(
                 raise typer.Exit(1)
 
             with console.status("[bold green]Searching...[/bold green]"):
-                answer = await rag.query(
-                    query=question,
-                    mode=mode,
-                    top_k=top_k,
-                )
+                if with_sources:
+                    result = await rag.query_with_sources(
+                        query=question,
+                        mode=mode,
+                        top_k=top_k,
+                    )
+                else:
+                    answer = await rag.query(
+                        query=question,
+                        mode=mode,
+                        top_k=top_k,
+                    )
 
-            console.print("[bold blue]Answer:[/bold blue]")
-            console.print(Panel(answer, style="green", padding=(1, 2)))
+            if with_sources:
+                console.print("[bold blue]Answer:[/bold blue]")
+                console.print(Panel(result["answer"], style="green", padding=(1, 2)))
+
+                references = result.get("references", [])
+                if references:
+                    table = Table(title="References", show_header=True)
+                    table.add_column("Reference ID", style="cyan")
+                    table.add_column("Source", style="green")
+                    for reference in references:
+                        table.add_row(
+                            str(reference.get("reference_id", "")),
+                            str(reference.get("file_path", "")),
+                        )
+                    console.print(table)
+
+                if show_context and result.get("context"):
+                    console.print("[bold blue]Context:[/bold blue]")
+                    console.print(
+                        Panel(result["context"], style="blue", padding=(1, 2))
+                    )
+            else:
+                console.print("[bold blue]Answer:[/bold blue]")
+                console.print(Panel(answer, style="green", padding=(1, 2)))
         finally:
             close_shared_client()
 

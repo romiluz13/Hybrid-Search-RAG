@@ -9,7 +9,7 @@
 #
 # Reference: https://github.com/romiluz13/HybridRAG
 
-.PHONY: help setup install dev test lint format clean build docker run-api run-ui
+.PHONY: help setup install dev test lint format clean build docker run-api run-ui example-smoke contract-tests release-gate-fast release-gate-live
 
 # Default target
 .DEFAULT_GOAL := help
@@ -46,7 +46,7 @@ help: ## Show this help message
 	@grep -E '^(dev|run-api|run-ui|run-cli|notebooks):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-18s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(GREEN)Testing & Quality:$(NC)"
-	@grep -E '^(test|test-cov|test-quick|benchmark|benchmark-save|lint|format|typecheck):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-18s$(NC) %s\n", $$1, $$2}'
+	@grep -E '^(test|test-cov|test-quick|example-smoke|contract-tests|release-gate-fast|release-gate-live|benchmark|benchmark-save|lint|format|typecheck):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-18s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(GREEN)Build & Deploy:$(NC)"
 	@grep -E '^(build|docker|clean):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-15s$(NC) %s\n", $$1, $$2}'
@@ -162,6 +162,21 @@ test-cov: ## Run tests with coverage report
 
 test-quick: ## Run fast unit tests only
 	@$(PYTEST) tests/enhancements/ -v
+
+example-smoke: ## Run example and API contract smoke tests
+	@$(PYTEST) tests/examples/ tests/api/test_query_api_features.py tests/core/test_reference_sources.py -v
+
+contract-tests: ## Run canonical API and integration contract tests
+	@$(PYTEST) tests/api/test_query_api_features.py tests/integration/test_full_rag_pipeline.py -v
+
+release-gate-fast: ## Run the fast publish gate for the blessed stack
+	@$(VENV)/bin/python -m compileall src/hybridrag tests
+	@$(VENV)/bin/ruff check src/hybridrag tests
+	@$(PYTEST) tests/api/test_query_api_features.py tests/core/ tests/examples/ tests/integration/test_full_rag_pipeline.py -v
+
+release-gate-live: ## Run the deterministic seeded live gate with real providers
+	@echo "$(BLUE)Using blessed local MongoDB stack: mongodb://localhost:27018/?directConnection=true$(NC)"
+	@$(VENV)/bin/python tests/e2e_real_test.py
 
 benchmark: ## Run performance benchmarks
 	@echo "$(BLUE)Running benchmarks...$(NC)"
