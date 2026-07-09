@@ -106,10 +106,17 @@ mongo-down: ## Stop local MongoDB
 # a user ran `pip install -e ".[all]"` directly instead of make first-time-setup).
 DEMO_PY := $(shell if [ -x "$(VENV)/bin/python" ]; then echo "$(VENV)/bin/python"; else echo "python3"; fi)
 
-demo: ## See MongoDB hybrid search in 60s (NO API keys; starts local MongoDB)
+demo: ## See MongoDB hybrid search in 60s (NO API keys). Uses MONGODB_URI from .env if set (Atlas), else starts local Docker.
 	@echo "$(BLUE)HybridRAG demo — no API keys required$(NC)"
-	@make mongo-up
-	@$(DEMO_PY) scripts/demo.py
+	@URI=$$(grep -E '^MONGODB_URI=' .env 2>/dev/null | cut -d= -f2- | tr -d '\r\n' || true); \
+	if [ -z "$$URI" ] || echo "$$URI" | grep -qiE 'localhost|127\.0\.0\.1'; then \
+		echo "$(BLUE)No Atlas URI configured — starting local MongoDB via Docker.$(NC)"; \
+		make mongo-up; \
+		$(DEMO_PY) scripts/demo.py; \
+	else \
+		echo "$(GREEN)Using MONGODB_URI from .env (Atlas) — no Docker required.$(NC)"; \
+		$(DEMO_PY) scripts/demo.py --uri "$$URI"; \
+	fi
 
 demo-full: ## Full generative RAG demo (requires VOYAGE_API_KEY + LLM key in .env)
 	@echo "$(BLUE)HybridRAG full demo — requires VOYAGE_API_KEY + LLM key in .env$(NC)"

@@ -31,6 +31,10 @@ from typing import Any
 
 from pymongo import MongoClient
 
+# Reuse the repo's TLS helper so the demo also works against Atlas
+# (mongodb+srv://) on macOS + python.org Python without SSL errors.
+from hybridrag.core.mongodb_client import _tls_kwargs
+
 DEFAULT_URI = "mongodb://localhost:27018/?directConnection=true"
 DB_NAME = "hybridrag_demo"
 CHUNKS = "demo_chunks"
@@ -87,11 +91,36 @@ QUERY_VECTOR = [0.0, 0.95, 0.05, 0.0, 0.0, 0.0, 0.05, 0.0]
 
 # --- Knowledge graph edges (source_node -> target_node, relationship) ---------
 EDGES_DATA: list[dict[str, Any]] = [
-    {"_id": "e1", "source_node_id": "hybrid", "target_node_id": "vector", "relationship_type": "combines"},
-    {"_id": "e2", "source_node_id": "hybrid", "target_node_id": "lexical", "relationship_type": "combines"},
-    {"_id": "e3", "source_node_id": "hybrid", "target_node_id": "atlas", "relationship_type": "runs_on"},
-    {"_id": "e4", "source_node_id": "atlas", "target_node_id": "vector", "relationship_type": "provides"},
-    {"_id": "e5", "source_node_id": "vector", "target_node_id": "voyage", "relationship_type": "powered_by"},
+    {
+        "_id": "e1",
+        "source_node_id": "hybrid",
+        "target_node_id": "vector",
+        "relationship_type": "combines",
+    },
+    {
+        "_id": "e2",
+        "source_node_id": "hybrid",
+        "target_node_id": "lexical",
+        "relationship_type": "combines",
+    },
+    {
+        "_id": "e3",
+        "source_node_id": "hybrid",
+        "target_node_id": "atlas",
+        "relationship_type": "runs_on",
+    },
+    {
+        "_id": "e4",
+        "source_node_id": "atlas",
+        "target_node_id": "vector",
+        "relationship_type": "provides",
+    },
+    {
+        "_id": "e5",
+        "source_node_id": "vector",
+        "target_node_id": "voyage",
+        "relationship_type": "powered_by",
+    },
 ]
 
 
@@ -129,7 +158,9 @@ def seed(client: MongoClient) -> None:
     db = client[DB_NAME]
     db[CHUNKS].insert_many(DOCS)
     db[EDGES].insert_many(EDGES_DATA)
-    print(f"Seeded {len(DOCS)} chunks + {len(EDGES_DATA)} graph edges into '{DB_NAME}'.")
+    print(
+        f"Seeded {len(DOCS)} chunks + {len(EDGES_DATA)} graph edges into '{DB_NAME}'."
+    )
 
 
 def create_indexes(client: MongoClient) -> None:
@@ -181,7 +212,14 @@ def run_vector_search(db: Any) -> list[dict[str, Any]]:
                 "limit": 3,
             }
         },
-        {"$project": {"_id": 1, "content": 1, "topic": 1, "score": {"$meta": "vectorSearchScore"}}},
+        {
+            "$project": {
+                "_id": 1,
+                "content": 1,
+                "topic": 1,
+                "score": {"$meta": "vectorSearchScore"},
+            }
+        },
     ]
     return list(db[CHUNKS].aggregate(pipeline))
 
@@ -195,7 +233,14 @@ def run_lexical_search(db: Any) -> list[dict[str, Any]]:
             }
         },
         {"$limit": 3},
-        {"$project": {"_id": 1, "content": 1, "topic": 1, "score": {"$meta": "searchScore"}}},
+        {
+            "$project": {
+                "_id": 1,
+                "content": 1,
+                "topic": 1,
+                "score": {"$meta": "searchScore"},
+            }
+        },
     ]
     return list(db[CHUNKS].aggregate(pipeline))
 
@@ -227,7 +272,10 @@ def run_rank_fusion(db: Any) -> list[dict[str, Any]]:
                             {
                                 "$search": {
                                     "index": "text_index",
-                                    "text": {"path": "content", "query": "hybrid search rank fusion"},
+                                    "text": {
+                                        "path": "content",
+                                        "query": "hybrid search rank fusion",
+                                    },
                                 }
                             },
                             {"$limit": 3},
@@ -258,7 +306,11 @@ def run_graph_lookup(db: Any) -> list[dict[str, Any]]:
             }
         },
         {"$limit": 1},
-        {"$project": {"graph": {"relationship_type": 1, "target_node_id": 1, "depth": 1}}},
+        {
+            "$project": {
+                "graph": {"relationship_type": 1, "target_node_id": 1, "depth": 1}
+            }
+        },
     ]
     # graphLookup starts from a documents collection; run against chunks but
     # only use the traversal result.
@@ -266,8 +318,15 @@ def run_graph_lookup(db: Any) -> list[dict[str, Any]]:
     return res[0].get("graph", []) if res else []
 
 
-def show(name: str, rows: list[dict[str, Any]], pipeline: list[dict[str, Any]] | None = None) -> None:
+def show(
+    name: str,
+    rows: list[dict[str, Any]],
+    pipeline: list[dict[str, Any]] | None = None,
+    lesson: str | None = None,
+) -> None:
     banner(name)
+    if lesson:
+        print(f"\n💡 What this shows: {lesson}")
     if pipeline is not None:
         print("\nMongoDB aggregation pipeline:")
         print(json.dumps(pipeline, indent=2))
@@ -283,23 +342,33 @@ def show(name: str, rows: list[dict[str, Any]], pipeline: list[dict[str, Any]] |
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="HybridRAG no-keys MongoDB value demo.")
-    parser.add_argument("--uri", default=DEFAULT_URI, help="MongoDB URI (default: local atlas-local)")
+    parser = argparse.ArgumentParser(
+        description="HybridRAG no-keys MongoDB value demo."
+    )
+    parser.add_argument(
+        "--uri", default=DEFAULT_URI, help="MongoDB URI (default: local atlas-local)"
+    )
     args = parser.parse_args()
 
     banner("HybridRAG — See MongoDB value in 60s (no API keys)")
     print(f"Connecting to: {args.uri}")
-    print(f"Query: \"{QUERY_TEXT}\"")
+    print(f'Query: "{QUERY_TEXT}"')
     print("Sample vectors used (replace with Voyage AI embeddings in production).")
 
-    client = MongoClient(args.uri, serverSelectionTimeoutMS=5000)
+    client = MongoClient(
+        args.uri, serverSelectionTimeoutMS=5000, **_tls_kwargs(args.uri)
+    )
     try:
         ver = client.server_info()["version"]
         print(f"Connected to MongoDB {ver}")
     except Exception as exc:
-        print(f"\nCould not connect to MongoDB at {args.uri}.\n"
-              f"Start the local stack with:\n"
-              f"  docker compose -f docker/docker-compose.local.yml up -d\n\nError: {exc}")
+        print(
+            f"\nCould not connect to MongoDB at {args.uri}.\n"
+            f"Options:\n"
+            f"  - Local (Docker):  docker compose -f docker/docker-compose.local.yml up -d\n"
+            f"  - Atlas (no Docker): set MONGODB_URI in .env to your Atlas connection string\n\n"
+            f"Error: {exc}"
+        )
         return 1
 
     reset(client)
@@ -308,31 +377,92 @@ def main() -> int:
 
     db = client[DB_NAME]
 
-    show("$vectorSearch (semantic nearest neighbors)",
-         run_vector_search(db),
-         [{"$vectorSearch": {"index": "vector_index", "path": "vector",
-                             "queryVector": "<query_vector>", "numCandidates": 10, "limit": 3}}])
+    show(
+        "$vectorSearch — semantic nearest neighbors",
+        run_vector_search(db),
+        [
+            {
+                "$vectorSearch": {
+                    "index": "vector_index",
+                    "path": "vector",
+                    "queryVector": "<query_vector>",
+                    "numCandidates": 10,
+                    "limit": 3,
+                }
+            }
+        ],
+        lesson="MongoDB finds the chunks whose vectors are closest to the query vector "
+        "(cosine similarity). Notice the 'hybrid' chunk ranks highest — its sample "
+        "vector was nearest to the query. In production these vectors come from "
+        "Voyage AI; here they are hand-crafted so you can see the mechanics with no API key.",
+    )
 
-    show("$search (lexical / BM25)",
-         run_lexical_search(db),
-         [{"$search": {"index": "text_index", "text": {"path": "content", "query": "hybrid search rank fusion"}}}])
+    show(
+        "$search — lexical / BM25 text matching",
+        run_lexical_search(db),
+        [
+            {
+                "$search": {
+                    "index": "text_index",
+                    "text": {"path": "content", "query": "hybrid search rank fusion"},
+                }
+            }
+        ],
+        lesson="MongoDB also does classic keyword search with BM25 scoring. Notice it can "
+        "surface documents that vector search might miss — pure lexical relevance, "
+        "no embeddings involved. This is the other half of hybrid search.",
+    )
 
-    show("$rankFusion (MongoDB 8.2 native hybrid search — vector + lexical via RRF)",
-         run_rank_fusion(db))
+    show(
+        "$rankFusion — MongoDB 8.2 native hybrid search (vector + lexical via RRF)",
+        run_rank_fusion(db),
+        lesson="This is the headline. $rankFusion runs BOTH pipelines (vector + text) and "
+        "merges them with Reciprocal Rank Fusion in a SINGLE database operation — "
+        "no app-side merging, no Pinecone+Postgres glue. Notice the result order "
+        "blends semantic and lexical relevance. One MongoDB aggregation, one "
+        "atomic result set. This is what replaces the fragmented Pinecone+Neo4j+"
+        "Redis stack with one database.",
+    )
 
-    banner("$graphLookup (knowledge-graph traversal from 'hybrid')")
+    banner("$graphLookup — knowledge-graph traversal from 'hybrid'")
+    print(
+        "\n💡 What this shows: MongoDB traverses entity relationships in ONE aggregation "
+        "stage — no Neo4j, no separate graph database. Starting from the 'hybrid' "
+        "entity, it walks the edges collection up to 2 hops. Notice it discovers that "
+        "'hybrid' combines 'vector' and 'lexical', runs on 'atlas', which provides "
+        "'vector' (powered by 'voyage') — a multi-hop traversal, all in MongoDB."
+    )
     graph = run_graph_lookup(db)
     print("\nMongoDB aggregation pipeline:")
-    print(json.dumps([{"$graphLookup": {"from": EDGES, "startWith": "hybrid",
-                       "connectFromField": "target_node_id", "connectToField": "source_node_id",
-                       "as": "graph", "maxDepth": 2, "depthField": "depth"}}], indent=2))
+    print(
+        json.dumps(
+            [
+                {
+                    "$graphLookup": {
+                        "from": EDGES,
+                        "startWith": "hybrid",
+                        "connectFromField": "target_node_id",
+                        "connectToField": "source_node_id",
+                        "as": "graph",
+                        "maxDepth": 2,
+                        "depthField": "depth",
+                    }
+                }
+            ],
+            indent=2,
+        )
+    )
     print("\nTraversal results (entity relationships reachable from 'hybrid'):")
     if not graph:
         print("  (no edges traversed)")
     for edge in graph:
-        print(f"  - depth {edge.get('depth')}: hybrid --{edge.get('relationship_type')}--> {edge.get('target_node_id')}")
+        print(
+            f"  - depth {edge.get('depth')}: hybrid --{edge.get('relationship_type')}--> {edge.get('target_node_id')}"
+        )
 
-    banner("That's MongoDB-native hybrid search — one database, atomic, no Pinecone/Neo4j/Redis.")
+    banner(
+        "That's MongoDB-native hybrid search — one database, atomic, no Pinecone/Neo4j/Redis."
+    )
     print("Next: `make demo-full` (bring Voyage + LLM keys) for full generative RAG.\n")
     return 0
 

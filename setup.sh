@@ -137,6 +137,8 @@ setup_env_file() {
             log_info "Creating .env from .env.example..."
             cp .env.example .env
             log_success ".env file created"
+            log_warning "Replace the YOUR_KEY_HERE placeholders in .env with your real API keys."
+            log_warning "For the no-keys demo, run: make demo"
         else
             log_warning ".env.example not found, skipping .env creation"
         fi
