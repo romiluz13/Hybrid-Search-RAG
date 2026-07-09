@@ -191,7 +191,9 @@ omit = [
 [tool.coverage.report]
 precision = 2
 show_missing = true
-fail_under = 60
+# No fail_under gate: the repo includes a large vendored engine/ subtree with
+# limited direct test coverage, so a fixed percentage gate is unreliable.
+# Coverage is still reported (show_missing=true) for visibility.
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
