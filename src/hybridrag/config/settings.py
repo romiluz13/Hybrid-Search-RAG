@@ -129,7 +129,14 @@ class Settings(BaseSettings):
     # Voyage AI (for embeddings and reranking)
     voyage_api_key: SecretStr | None = Field(
         default=None,
-        description="Voyage AI API key (required if embedding_provider=voyage)",
+        description="Voyage AI API key. Use a `pa-...` key for Voyage AI direct, "
+        "or an `al-...` key for the MongoDB-hosted endpoint (set voyage_base_url).",
+    )
+    voyage_base_url: str | None = Field(
+        default=None,
+        description="Optional base URL for the Voyage client. Set to the MongoDB-hosted "
+        "endpoint (e.g. https://ai.mongodb.com/v1) to use an `al-...` Atlas key "
+        "instead of a Voyage AI direct `pa-...` key. Defaults to Voyage AI direct.",
     )
     voyage_embedding_model: str = Field(
         default="voyage-4-large",

@@ -40,10 +40,15 @@ class VoyageEmbedder:
     embedding_model: str = "voyage-4-large"
     context_model: str = "voyage-context-3"
     batch_size: int = 128
+    base_url: str | None = None
 
     def __post_init__(self) -> None:
-        self._sync_client = voyageai.Client(api_key=self.api_key)
-        self._async_client = voyageai.AsyncClient(api_key=self.api_key)
+        self._sync_client = voyageai.Client(
+            api_key=self.api_key, base_url=self.base_url
+        )
+        self._async_client = voyageai.AsyncClient(
+            api_key=self.api_key, base_url=self.base_url
+        )
 
     @retry(
         wait=wait_exponential(multiplier=1, min=1, max=10),
@@ -207,10 +212,15 @@ class VoyageReranker:
 
     api_key: str
     model: str = "rerank-2.5"
+    base_url: str | None = None
 
     def __post_init__(self) -> None:
-        self._sync_client = voyageai.Client(api_key=self.api_key)
-        self._async_client = voyageai.AsyncClient(api_key=self.api_key)
+        self._sync_client = voyageai.Client(
+            api_key=self.api_key, base_url=self.base_url
+        )
+        self._async_client = voyageai.AsyncClient(
+            api_key=self.api_key, base_url=self.base_url
+        )
 
     async def rerank_async(
         self,
@@ -335,14 +345,16 @@ def create_embedding_func(
     api_key: str,
     model: str = "voyage-4-large",
     batch_size: int = 128,
+    base_url: str | None = None,
 ) -> Callable[[list[str]], np.ndarray]:
     """
     Create embedding function for HybridRAG.
 
     Args:
-        api_key: Voyage AI API key
+        api_key: Voyage AI API key (`pa-...` direct, or `al-...` with base_url)
         model: Embedding model name
         batch_size: Batch size for API calls
+        base_url: Optional base URL (set to the MongoDB-hosted endpoint to use an `al-` key)
 
     Returns:
         Async function that takes list[str] and returns np.ndarray
@@ -351,6 +363,7 @@ def create_embedding_func(
         api_key=api_key,
         embedding_model=model,
         batch_size=batch_size,
+        base_url=base_url,
     )
 
     async def embed_func(texts: list[str]) -> np.ndarray:
@@ -363,19 +376,21 @@ def create_rerank_func(
     api_key: str,
     model: str = "rerank-2.5",
     default_instructions: str | None = None,
+    base_url: str | None = None,
 ) -> Callable[..., list[dict]]:
     """
     Create rerank function for HybridRAG.
 
     Args:
-        api_key: Voyage AI API key
+        api_key: Voyage AI API key (`pa-...` direct, or `al-...` with base_url)
         model: Reranking model name
         default_instructions: Optional default instructions applied to all queries
+        base_url: Optional base URL (set to the MongoDB-hosted endpoint to use an `al-` key)
 
     Returns:
         Async function for reranking documents
     """
-    reranker = VoyageReranker(api_key=api_key, model=model)
+    reranker = VoyageReranker(api_key=api_key, model=model, base_url=base_url)
 
     async def rerank_func(
         query: str,

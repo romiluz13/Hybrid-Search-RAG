@@ -211,6 +211,7 @@ def _create_embedding_func(
         api_key=settings.voyage_api_key.get_secret_value(),
         model=settings.voyage_embedding_model,
         batch_size=settings.embedding_batch_size,
+        base_url=settings.voyage_base_url,
     )
     logger.info(
         f"[INIT] Voyage embedding configured: model={settings.voyage_embedding_model}, dim={settings.embedding_dim}, batch_size={settings.embedding_batch_size}"
@@ -354,6 +355,7 @@ class HybridRAG:
                 api_key=self.settings.voyage_api_key.get_secret_value(),
                 embedding_model=self.settings.voyage_embedding_model,
                 batch_size=64,
+                base_url=self.settings.voyage_base_url,
             )
 
         embedder = self._cached_embedder
@@ -430,6 +432,7 @@ class HybridRAG:
                 api_key=self.settings.voyage_api_key.get_secret_value(),
                 model=self.settings.voyage_rerank_model,
                 default_instructions=default_instructions,
+                base_url=self.settings.voyage_base_url,
             )
 
             # Wrap with entity boosting if enabled
