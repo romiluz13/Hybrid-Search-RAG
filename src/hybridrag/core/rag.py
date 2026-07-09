@@ -276,6 +276,31 @@ def _create_llm_func(settings: Settings) -> Callable[..., str]:
             model=settings.gemini_model,
         )
 
+    elif provider == "grove":
+        # Grove is a MongoDB-internal OpenAI-compatible gateway. Reuse the
+        # OpenAI client with the Grove base_url + key.
+        from ..integrations.openai import create_openai_llm_func
+
+        grove_key_setting = settings.grove_api_key
+        api_key: str = (
+            grove_key_setting.get_secret_value()
+            if grove_key_setting is not None
+            else (os.getenv("GROVE_API_KEY") or "")
+        )
+        base_url = settings.grove_base_url or os.getenv("GROVE_BASE_URL")
+        if not api_key or not base_url:
+            raise ValueError(
+                "GROVE_API_KEY and GROVE_BASE_URL required when llm_provider=grove "
+                "(set them in .env or your shell)"
+            )
+        logger.info(f"[INIT] Grove LLM configured: model={settings.grove_model}")
+        return create_openai_llm_func(
+            api_key=api_key,
+            model=settings.grove_model,
+            base_url=base_url,
+            default_headers=None,
+        )
+
     else:
         logger.error(f"[INIT] Unknown LLM provider: {provider}")
         raise ValueError(f"Unknown LLM provider: {provider}")

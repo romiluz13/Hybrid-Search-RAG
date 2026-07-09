@@ -273,8 +273,13 @@ seeded data — no Voyage key, no LLM key, no Atlas account. You see:
 # 1. Configure API keys
 cp .env.example .env              # MONGODB_URI defaults to local; add your keys
 #    Required: VOYAGE_API_KEY (https://dash.voyageai.com/)
-#    Required: one LLM key (Anthropic recommended, or OpenAI/Gemini)
-#              set LLM_PROVIDER to match (default: anthropic)
+#    Required: one LLM key — set LLM_PROVIDER to match:
+#              - anthropic (default) — ANTHROPIC_API_KEY
+#              - openai              — OPENAI_API_KEY
+#              - gemini              — GEMINI_API_KEY
+#              - grove               — GROVE_API_KEY + GROVE_BASE_URL
+#                (MongoDB internal OpenAI-compatible gateway; for SAs
+#                 without an OpenAI/Anthropic key)
 
 # 2. Run full RAG (ingests real Voyage embeddings + generates an answer)
 make demo-full
@@ -284,6 +289,12 @@ make run-api        # FastAPI  → http://localhost:8000  (/health, /docs)
 make run-ui         # Chainlit → http://localhost:8001
 make run-cli        # interactive CLI
 ```
+
+> **macOS + Atlas SSL note:** if you hit `SSL: CERTIFICATE_VERIFY_FAILED`
+> against Atlas (common with python.org Python, which doesn't bundle CA
+> certs), HybridRAG now automatically uses `certifi`'s CA bundle for
+> `mongodb+srv://` connections. No action needed. For a corporate/custom CA,
+> set `MONGODB_TLS_CA_FILE=/path/to/your-ca.pem`.
 
 ### Canonical Query Paths (Python SDK)
 

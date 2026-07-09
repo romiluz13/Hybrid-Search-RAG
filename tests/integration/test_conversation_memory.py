@@ -16,6 +16,8 @@ from pymongo import AsyncMongoClient
 from hybridrag.memory import ConversationMemory
 from tests.conftest import _resolve_test_mongodb_uri
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 async def memory(require_mongodb_uri):
@@ -47,6 +49,7 @@ def unique_session_id():
     return f"test-{uuid.uuid4()}"
 
 
+@pytest.mark.integration
 class TestConversationMemorySchema:
     """Test the new schema design (Rule 1.1 compliant)."""
 
@@ -138,6 +141,7 @@ class TestConversationMemorySchema:
         await memory.delete_session(session_id)
 
 
+@pytest.mark.integration
 class TestConversationMemoryOperations:
     """Test CRUD operations."""
 

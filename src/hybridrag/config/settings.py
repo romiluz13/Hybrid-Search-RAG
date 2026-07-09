@@ -168,9 +168,10 @@ class Settings(BaseSettings):
     )
 
     # LLM Provider Selection
-    llm_provider: Literal["anthropic", "openai", "gemini"] = Field(
-        default="gemini",
-        description="LLM provider to use (anthropic, openai, gemini)",
+    llm_provider: Literal["anthropic", "openai", "gemini", "grove"] = Field(
+        default="anthropic",
+        description="LLM provider to use (anthropic, openai, gemini, grove). "
+        "grove = MongoDB internal OpenAI-compatible gateway.",
     )
     enable_llm: bool = Field(
         default=True,
@@ -214,6 +215,21 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = Field(
         default=None,
         description="Google AI API key (required if llm_provider=gemini)",
+    )
+
+    # Grove — MongoDB internal OpenAI-compatible LLM gateway.
+    # Reuses the OpenAI client with a custom base_url + api key.
+    grove_api_key: SecretStr | None = Field(
+        default=None,
+        description="Grove API key (required if llm_provider=grove). MongoDB internal.",
+    )
+    grove_base_url: str | None = Field(
+        default=None,
+        description="Grove gateway base URL, e.g. https://grove.example.mongodb.com/v1",
+    )
+    grove_model: str = Field(
+        default="gpt-4o",
+        description="Model name accepted by the Grove gateway",
     )
     gemini_model: str = Field(
         default="gemini-2.5-flash",

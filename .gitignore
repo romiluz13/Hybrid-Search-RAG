@@ -97,7 +97,7 @@ Thumbs.db
 .mypy_cache/
 
 # Local scripts with internal test data
-scripts/
+scripts/*
 !scripts/demo.py
 
 # UV lock file (optional)

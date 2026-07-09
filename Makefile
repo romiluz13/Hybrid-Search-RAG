@@ -260,28 +260,35 @@ clean: ## Clean build artifacts and caches
 # MongoDB Atlas Setup
 #---------------------------------------------------------------------------
 
-atlas-check: ## Check MongoDB connection
-	@echo "$(BLUE)Checking MongoDB Atlas connection...$(NC)"
+atlas-check: ## Check MongoDB connection (TLS/certifi-aware; works with Atlas on macOS)
+	@echo "$(BLUE)Checking MongoDB connection...$(NC)"
 	@$(VENV)/bin/python -c "\
 from hybridrag.config import get_settings; \
+from hybridrag.core.mongodb_client import _tls_kwargs; \
 from pymongo import MongoClient; \
+import asyncio; \
 s = get_settings(); \
-c = MongoClient(s.mongodb_uri.get_secret_value(), serverSelectionTimeoutMS=5000, connectTimeoutMS=5000); \
+uri = s.mongodb_uri.get_secret_value(); \
+c = MongoClient(uri, serverSelectionTimeoutMS=5000, connectTimeoutMS=5000, **_tls_kwargs(uri, tls_flag=s.mongodb_tls)); \
 print(f'Connected to: {c.server_info()[\"version\"]}'); \
-print(f'Database: {s.mongodb_database}')"
+print(f'Database: {s.mongodb_database}'); \
+c.close()"
 
-atlas-indexes: ## Show MongoDB Atlas index status
+atlas-indexes: ## Show MongoDB Atlas index status (TLS/certifi-aware)
 	@echo "$(BLUE)Checking Atlas Search indexes...$(NC)"
 	@$(VENV)/bin/python -c "\
 from hybridrag.config import get_settings; \
+from hybridrag.core.mongodb_client import _tls_kwargs; \
 from pymongo import MongoClient; \
 s = get_settings(); \
-c = MongoClient(s.MONGODB_URI); \
-db = c[s.MONGODB_DATABASE]; \
+uri = s.mongodb_uri.get_secret_value(); \
+c = MongoClient(uri, **_tls_kwargs(uri, tls_flag=s.mongodb_tls)); \
+db = c[s.mongodb_database]; \
 for coll in db.list_collection_names(): \
     print(f'\\n{coll}:'); \
     for idx in db[coll].list_indexes(): \
-        print(f'  - {idx[\"name\"]}')"
+        print(f'  - {idx[\"name\"]}'); \
+c.close()"
 
 #---------------------------------------------------------------------------
 # Quick Commands
