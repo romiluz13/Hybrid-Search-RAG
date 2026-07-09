@@ -197,6 +197,6 @@ export OPENAI_API_KEY="sk-..."
 
 ## More Resources
 
-- [HybridRAG Documentation](https://github.com/romiluz13/HybridRAG)
+- [HybridRAG Documentation](https://github.com/romiluz13/Hybrid-Search-RAG)
 - [MongoDB Atlas Vector Search](https://www.mongodb.com/docs/atlas/atlas-vector-search/)
 - [Voyage AI Documentation](https://docs.voyageai.com/)

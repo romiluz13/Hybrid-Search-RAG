@@ -191,7 +191,7 @@ print_next_steps() {
     echo "     - make run-ui      # Start chat UI"
     echo "     - make run-cli     # Run CLI"
     echo ""
-    echo -e "${BLUE}Documentation:${NC} https://github.com/romiluz13/HybridRAG"
+    echo -e "${BLUE}Documentation:${NC} https://github.com/romiluz13/Hybrid-Search-RAG"
     echo ""
 }
 

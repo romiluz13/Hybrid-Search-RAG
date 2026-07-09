@@ -187,8 +187,12 @@ class TestBuildGraphLookupPipeline:
         assert target_condition == "mongodb"
 
 
+@pytest.mark.integration
 class TestGraphSearchIntegration:
-    """Integration tests for real MongoDB-backed graph traversal behavior."""
+    """Integration tests for real MongoDB-backed graph traversal behavior.
+
+    Marked ``integration``: requires a live MongoDB (atlas-local on localhost:27018).
+    """
 
     @pytest.fixture
     async def seeded_graph_db(self, mongodb_test_db):

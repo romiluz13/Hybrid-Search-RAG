@@ -177,8 +177,12 @@ class TestExtractPipelineScore:
         assert score == 0.0
 
 
+@pytest.mark.integration
 class TestMixModeSearchIntegration:
-    """MongoDB-backed integration tests for mix mode behavior."""
+    """MongoDB-backed integration tests for mix mode behavior.
+
+    Marked ``integration``: requires a live MongoDB (atlas-local on localhost:27018).
+    """
 
     @pytest.fixture
     async def seeded_mix_mode_db(self, mongodb_test_db):

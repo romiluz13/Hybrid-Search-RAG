@@ -248,8 +248,8 @@ OPERATOR_SCORE_FIELDS = {
 
 ```bash
 # Clone and install
-git clone https://github.com/romiluz13/HybridRAG.git
-cd HybridRAG
+git clone https://github.com/romiluz13/Hybrid-Search-RAG.git
+cd Hybrid-Search-RAG
 
 # First-time setup (recommended)
 make first-time-setup
@@ -483,8 +483,8 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ```bash
 # Development setup
-git clone https://github.com/romiluz13/HybridRAG.git
-cd HybridRAG
+git clone https://github.com/romiluz13/Hybrid-Search-RAG.git
+cd Hybrid-Search-RAG
 make first-time-setup
 
 # Run tests before submitting

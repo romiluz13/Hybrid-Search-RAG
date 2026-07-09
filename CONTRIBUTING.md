@@ -14,8 +14,8 @@ Thank you for your interest in contributing! This guide will help you get starte
 
 ```bash
 # Clone repository
-git clone https://github.com/romiluz13/HybridRAG.git
-cd HybridRAG
+git clone https://github.com/romiluz13/Hybrid-Search-RAG.git
+cd Hybrid-Search-RAG
 
 # Create virtual environment
 python -m venv venv

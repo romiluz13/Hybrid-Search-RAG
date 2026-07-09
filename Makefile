@@ -7,9 +7,9 @@
 #   make test      - Run tests
 #   make help      - Show all commands
 #
-# Reference: https://github.com/romiluz13/HybridRAG
+# Reference: https://github.com/romiluz13/Hybrid-Search-RAG
 
-.PHONY: help setup install dev test lint format clean build docker run-api run-ui example-smoke contract-tests release-gate-fast release-gate-live
+.PHONY: help setup install dev test lint format clean build docker run-api run-ui example-smoke contract-tests release-gate-fast release-gate-live test-integration test-cov test-quick
 
 # Default target
 .DEFAULT_GOAL := help
@@ -46,7 +46,7 @@ help: ## Show this help message
 	@grep -E '^(dev|run-api|run-ui|run-cli|notebooks):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-18s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(GREEN)Testing & Quality:$(NC)"
-	@grep -E '^(test|test-cov|test-quick|example-smoke|contract-tests|release-gate-fast|release-gate-live|benchmark|benchmark-save|lint|format|typecheck):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-18s$(NC) %s\n", $$1, $$2}'
+	@grep -E '^(test|test-cov|test-quick|test-integration|example-smoke|contract-tests|release-gate-fast|release-gate-live|benchmark|benchmark-save|lint|format|typecheck):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-18s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(GREEN)Build & Deploy:$(NC)"
 	@grep -E '^(build|docker|clean):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-15s$(NC) %s\n", $$1, $$2}'
@@ -151,17 +151,21 @@ notebooks: ## Start Jupyter Lab with examples
 # Testing & Quality
 #---------------------------------------------------------------------------
 
-test: ## Run all tests
+test: ## Run all tests (excludes MongoDB-backed integration tests)
 	@echo "$(BLUE)Running tests...$(NC)"
-	@$(PYTEST) tests/ -v --ignore=tests/test_lightrag.py
+	@$(PYTEST) tests/ -v -m "not integration" --ignore=tests/test_lightrag.py
 
-test-cov: ## Run tests with coverage report
+test-cov: ## Run tests with coverage report (excludes integration tests)
 	@echo "$(BLUE)Running tests with coverage...$(NC)"
-	@$(PYTEST) tests/ -v --cov=src/hybridrag --cov-report=html --ignore=tests/test_lightrag.py
+	@$(PYTEST) tests/ -v -m "not integration" --cov=src/hybridrag --cov-report=html --ignore=tests/test_lightrag.py
 	@echo "$(GREEN)Coverage report: htmlcov/index.html$(NC)"
 
-test-quick: ## Run fast unit tests only
-	@$(PYTEST) tests/enhancements/ -v
+test-quick: ## Run fast unit tests only (excludes integration tests)
+	@$(PYTEST) tests/enhancements/ -v -m "not integration"
+
+test-integration: ## Run MongoDB-backed integration tests (requires live MongoDB on localhost:27018)
+	@echo "$(BLUE)Running integration tests (requires MongoDB on localhost:27018)...$(NC)"
+	@$(PYTEST) tests/ -v -m "integration" --ignore=tests/test_lightrag.py
 
 example-smoke: ## Run example and API contract smoke tests
 	@$(PYTEST) tests/examples/ tests/api/test_query_api_features.py tests/core/test_reference_sources.py -v

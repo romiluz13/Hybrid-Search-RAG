@@ -116,10 +116,10 @@ all = [
 hybridrag = "hybridrag.cli:run_cli"
 
 [project.urls]
-Homepage = "https://github.com/romiluz13/HybridRAG"
-Documentation = "https://github.com/romiluz13/HybridRAG#readme"
-Repository = "https://github.com/romiluz13/HybridRAG"
-Issues = "https://github.com/romiluz13/HybridRAG/issues"
+Homepage = "https://github.com/romiluz13/Hybrid-Search-RAG"
+Documentation = "https://github.com/romiluz13/Hybrid-Search-RAG#readme"
+Repository = "https://github.com/romiluz13/Hybrid-Search-RAG"
+Issues = "https://github.com/romiluz13/Hybrid-Search-RAG/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

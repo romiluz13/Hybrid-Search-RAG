@@ -26,7 +26,7 @@ This guide helps AI agents effectively work with the HybridRAG codebase.
 |------|----------|
 | Main RAG implementation | `src/hybridrag/core/rag.py` |
 | MongoDB hybrid search | `src/hybridrag/enhancements/mongodb_hybrid_search.py` |
-| Filter builders | `src/hybridrag/enhancements/filters.py` |
+| Filter builders | `src/hybridrag/enhancements/filters/` |
 | System prompts | `src/hybridrag/prompts/` |
 | CLI commands | `src/hybridrag/cli/app.py` |
 | Tests | `tests/` |
@@ -262,7 +262,7 @@ pprint.pprint(pipeline)
 
 **If confused about:**
 - **MongoDB syntax** → Check `.claude/rules/mongodb-patterns.md`
-- **Filter builders** → Read `src/hybridrag/enhancements/filters.py`
+- **Filter builders** → Read `src/hybridrag/enhancements/filters/`
 - **Prompts** → See `notebooks/04_prompt_engineering.ipynb`
 - **Testing** → Look at existing tests in `tests/enhancements/`
 
