@@ -43,7 +43,16 @@ async def rag(require_mongodb_uri, tmp_path):
     Create HybridRAG instance for integration tests.
 
     Uses real MongoDB (atlas-local) and optionally a real OpenAI-compatible LLM.
+    Requires VOYAGE_API_KEY (Voyage is the only supported embedding provider);
+    skips when it is not configured so CI stays green on the Mongo-only path.
+    The live release gate (tests/e2e_real_test.py) still validates the full
+    blessed stack when secrets are present.
     """
+    if not os.getenv("VOYAGE_API_KEY"):
+        pytest.skip(
+            "VOYAGE_API_KEY not set; integration tests that ingest real "
+            "embeddings are skipped. Set the secret to run the full pipeline."
+        )
     base_settings = get_settings()
     # Each test gets a unique database to avoid cross-test contamination
     test_db = f"hybridrag_integ_{uuid.uuid4().hex[:8]}"
