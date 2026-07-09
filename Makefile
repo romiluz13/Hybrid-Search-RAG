@@ -101,15 +101,20 @@ mongo-up: ## Start local MongoDB (atlas-local:preview on mongodb://localhost:270
 mongo-down: ## Stop local MongoDB
 	@docker compose -f docker/docker-compose.local.yml down
 
+# Python interpreter used by demo targets: prefer the project venv, fall back to
+# the active/system python3 so `make demo` works even without a .venv (e.g. when
+# a user ran `pip install -e ".[all]"` directly instead of make first-time-setup).
+DEMO_PY := $(shell if [ -x "$(VENV)/bin/python" ]; then echo "$(VENV)/bin/python"; else echo "python3"; fi)
+
 demo: ## See MongoDB hybrid search in 60s (NO API keys; starts local MongoDB)
 	@echo "$(BLUE)HybridRAG demo — no API keys required$(NC)"
 	@make mongo-up
-	@$(VENV)/bin/python scripts/demo.py
+	@$(DEMO_PY) scripts/demo.py
 
 demo-full: ## Full generative RAG demo (requires VOYAGE_API_KEY + LLM key in .env)
 	@echo "$(BLUE)HybridRAG full demo — requires VOYAGE_API_KEY + LLM key in .env$(NC)"
 	@make mongo-up
-	@$(VENV)/bin/python examples/01_quickstart.py
+	@$(DEMO_PY) examples/01_quickstart.py
 
 notebooks-setup: ## Install Jupyter Lab for the notebooks
 	@$(PIP) install jupyterlab ipykernel
@@ -125,10 +130,10 @@ first-time-setup: ## Complete setup for new developers (ends with a working demo
 	@$(VENV)/bin/pre-commit install || true
 	@echo ""
 	@echo "$(GREEN)Step 3/4: Starting local MongoDB$(NC)"
-	@make mongo-up
+	@make mongo-up || echo "$(YELLOW)Could not start MongoDB. Start Docker Desktop then run: make demo$(NC)"
 	@echo ""
 	@echo "$(GREEN)Step 4/4: Running the no-keys demo (see MongoDB value now)$(NC)"
-	@$(VENV)/bin/python scripts/demo.py || echo "$(YELLOW)Demo needs Docker running: start Docker Desktop then 'make demo'$(NC)"
+	@$(DEMO_PY) scripts/demo.py || echo "$(YELLOW)Demo needs Docker running: start Docker Desktop then 'make demo'$(NC)"
 	@echo ""
 	@echo "$(GREEN)========================================$(NC)"
 	@echo "$(GREEN)Setup complete!$(NC)"
@@ -266,7 +271,6 @@ atlas-check: ## Check MongoDB connection (TLS/certifi-aware; works with Atlas on
 from hybridrag.config import get_settings; \
 from hybridrag.core.mongodb_client import _tls_kwargs; \
 from pymongo import MongoClient; \
-import asyncio; \
 s = get_settings(); \
 uri = s.mongodb_uri.get_secret_value(); \
 c = MongoClient(uri, serverSelectionTimeoutMS=5000, connectTimeoutMS=5000, **_tls_kwargs(uri, tls_flag=s.mongodb_tls)); \

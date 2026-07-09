@@ -31,8 +31,12 @@ def _tls_kwargs(uri: str, *, tls_flag: bool = False) -> dict[str, Any]:
     certifi is a safe superset so we apply it for TLS connections everywhere.
     """
     del tls_flag  # kept for API stability; URI inspection decides TLS
+    # Connection-string options are case-insensitive per the URI spec.
+    uri_lower = uri.lower()
     uses_tls = (
-        uri.startswith("mongodb+srv://") or "tls=true" in uri or "ssl=true" in uri
+        uri_lower.startswith("mongodb+srv://")
+        or "tls=true" in uri_lower
+        or "ssl=true" in uri_lower
     )
     if not uses_tls:
         return {}

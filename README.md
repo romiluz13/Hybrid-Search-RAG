@@ -192,12 +192,13 @@ results = await rag.query(
 ### $meta Score Fields Reference
 
 ```python
-# CRITICAL: Each operator uses a DIFFERENT $meta field!
+# $vectorSearch and $search use operator-specific $meta keywords.
+# $rankFusion and $scoreFusion both expose the combined score via "score".
 OPERATOR_SCORE_FIELDS = {
-    "$vectorSearch":        "vectorSearchScore",   # Legacy
-    "$search.vectorSearch": "searchScore",         # MongoDB 8.2+
-    "$rankFusion":          "rankFusionScore",
-    "$scoreFusion":         "scoreFusionScore",
+    "$vectorSearch":        "vectorSearchScore",   # legacy $vectorSearch stage
+    "$search.vectorSearch": "searchScore",         # MongoDB 8.2+ $search.vectorSearch
+    "$rankFusion":          "score",               # MongoDB 8.0+ (also "scoreDetails")
+    "$scoreFusion":         "score",               # MongoDB 8.3+ (also "scoreDetails")
 }
 ```
 
@@ -248,10 +249,16 @@ OPERATOR_SCORE_FIELDS = {
 
 ### See MongoDB value in 60 seconds (no API keys, no signup)
 
+**Prerequisites:** Python 3.11+ and Docker Desktop (running).
+
 ```bash
 git clone https://github.com/romiluz13/Hybrid-Search-RAG.git
 cd Hybrid-Search-RAG
-pip install -e ".[all]"          # or: make first-time-setup
+
+# Create a virtual environment and install (one-time)
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[all]"            # or just run: make first-time-setup
+
 make demo                         # starts local MongoDB + runs the showcase
 ```
 

@@ -408,10 +408,13 @@ async def hybrid_search_with_rank_fusion(
                 "scoreDetails": True,
             }
         },
-        # Extract both the RRF score and scoreDetails for per-pipeline analysis
+        # Extract the fused score and scoreDetails for per-pipeline analysis.
+        # Per official $meta docs, the score metadata field for $rankFusion (and
+        # $scoreFusion) is "score" (NOT "rankFusionScore" — that keyword is not
+        # documented and errors on many builds, silently degrading to manual RRF).
         {
             "$addFields": {
-                "hybrid_score": {"$meta": "rankFusionScore"},
+                "hybrid_score": {"$meta": "score"},
                 "score_details": {"$meta": "scoreDetails"},
             }
         },

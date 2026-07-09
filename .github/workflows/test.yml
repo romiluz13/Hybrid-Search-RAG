@@ -125,6 +125,11 @@ jobs:
   benchmark:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongodb/mongodb-atlas-local:preview
+        ports:
+          - 27018:27017
     steps:
       - uses: actions/checkout@v4
 
@@ -141,9 +146,13 @@ jobs:
 
       - name: Run benchmarks
         env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_URI: mongodb://localhost:27018/?directConnection=true
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
         run: |
+          if [ -z "$VOYAGE_API_KEY" ]; then
+            echo "VOYAGE_API_KEY not configured; skipping benchmarks."
+            exit 0
+          fi
           pytest tests/benchmarks/ \
             -v \
             -m benchmark \
