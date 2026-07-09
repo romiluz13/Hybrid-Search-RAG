@@ -76,7 +76,7 @@
 | Feature | Description |
 | --------- | ------------- |
 | **Atomic Updates** | Vector + metadata + graph in one transaction |
-| **$rankFusion** | Native MongoDB 8.2 weighted hybrid search |
+| **$rankFusion** | Native MongoDB 8.0+ weighted hybrid search (RRF) |
 | **$scoreFusion** | Score-based fusion with normalization |
 | **Knowledge Graph** | Automatic entity & relationship extraction |
 | **Self-Compacting Memory** | Conversations auto-summarize |
@@ -537,7 +537,7 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 ```
 ╔═══════════════════════════════════════════════════════════════════════════╗
 ║                                                                           ║
-║   MongoDB 8.2 Native: $rankFusion • $scoreFusion • $search.vectorSearch   ║
+║   MongoDB 8.0+ Native: $rankFusion • $scoreFusion(8.3+) • $search.vectorSearch   ║
 ║                                                                           ║
 ║   Three Filter Systems: Vector (MQL) • Atlas • Lexical Prefilters         ║
 ║                                                                           ║

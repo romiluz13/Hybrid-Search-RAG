@@ -246,11 +246,10 @@ def run_lexical_search(db: Any) -> list[dict[str, Any]]:
 
 
 def run_rank_fusion(db: Any) -> list[dict[str, Any]]:
-    """The MongoDB 8.2 native hybrid search: $rankFusion of vector + lexical.
+    """The MongoDB 8.0+ native hybrid search: $rankFusion of vector + lexical.
 
-    Results are returned in fused rank order. (The `rankFusionScore` $meta is not
-    exposed on all atlas-local:preview builds, so we rank by position — the fusion
-    order is the demonstration of value.)
+    Uses Reciprocal Rank Fusion (RRF) with configurable weights. The fused score
+    is retrieved via `$meta: "score"` (the documented keyword for $rankFusion).
     """
     pipeline = [
         {
@@ -286,7 +285,12 @@ def run_rank_fusion(db: Any) -> list[dict[str, Any]]:
                 "scoreDetails": True,
             }
         },
-        {"$project": {"_id": 1, "content": 1, "topic": 1}},
+        {
+            "$addFields": {
+                "score": {"$meta": "score"},
+            }
+        },
+        {"$project": {"_id": 1, "content": 1, "topic": 1, "score": 1}},
     ]
     return list(db[CHUNKS].aggregate(pipeline))
 
@@ -391,10 +395,13 @@ def main() -> int:
                 }
             }
         ],
-        lesson="MongoDB finds the chunks whose vectors are closest to the query vector "
-        "(cosine similarity). Notice the 'hybrid' chunk ranks highest — its sample "
+        lesson="MongoDB finds the chunks whose vectors are closest to the query vector, "
+        "using the similarity function configured on the index (this demo uses cosine). "
+        "Notice the 'hybrid' chunk ranks highest — its sample "
         "vector was nearest to the query. In production these vectors come from "
-        "Voyage AI; here they are hand-crafted so you can see the mechanics with no API key.",
+        "Voyage AI; here they are hand-crafted so you can see the mechanics with no API key. "
+        "(MongoDB recommends numCandidates >= 20x limit for production; this tiny demo "
+        "uses small values since the whole corpus fits in one batch.)",
     )
 
     show(
@@ -414,14 +421,14 @@ def main() -> int:
     )
 
     show(
-        "$rankFusion — MongoDB 8.2 native hybrid search (vector + lexical via RRF)",
+        "$rankFusion — MongoDB 8.0+ native hybrid search (vector + lexical via weighted RRF)",
         run_rank_fusion(db),
         lesson="This is the headline. $rankFusion runs BOTH pipelines (vector + text) and "
         "merges them with Reciprocal Rank Fusion in a SINGLE database operation — "
         "no app-side merging, no Pinecone+Postgres glue. Notice the result order "
-        "blends semantic and lexical relevance. One MongoDB aggregation, one "
-        "atomic result set. This is what replaces the fragmented Pinecone+Neo4j+"
-        "Redis stack with one database.",
+        "blends semantic and lexical relevance, and the fused `score` is MongoDB's "
+        "own RRF output. One MongoDB aggregation, one unified result set. This is "
+        "what replaces the fragmented Pinecone+Neo4j+Redis stack with one database.",
     )
 
     banner("$graphLookup — knowledge-graph traversal from 'hybrid'")
@@ -461,7 +468,7 @@ def main() -> int:
         )
 
     banner(
-        "That's MongoDB-native hybrid search — one database, atomic, no Pinecone/Neo4j/Redis."
+        "That's MongoDB-native hybrid search — one database, one operation, no Pinecone/Neo4j/Redis."
     )
     print("Next: `make demo-full` (bring Voyage + LLM keys) for full generative RAG.\n")
     return 0
