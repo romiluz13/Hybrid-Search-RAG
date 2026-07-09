@@ -72,8 +72,9 @@
 <td width="50%">
 
 ### 🔄 Core Capabilities
+
 | Feature | Description |
-|---------|-------------|
+| --------- | ------------- |
 | **Atomic Updates** | Vector + metadata + graph in one transaction |
 | **$rankFusion** | Native MongoDB 8.2 weighted hybrid search |
 | **$scoreFusion** | Score-based fusion with normalization |
@@ -84,8 +85,9 @@
 <td width="50%">
 
 ### 🚀 MongoDB 8.2 Native
+
 | Feature | Description |
-|---------|-------------|
+| --------- | ------------- |
 | **Lexical Prefilters** | Fuzzy, phrase, wildcard BEFORE vectors |
 | **Dynamic numCandidates** | Auto-tuned (top_k × 20) |
 | **scoreDetails** | Per-pipeline score debugging |
@@ -180,7 +182,7 @@ results = await rag.query(
 ### Why Lexical Prefilters Matter
 
 | Scenario | Legacy $vectorSearch | New $search.vectorSearch |
-|----------|---------------------|--------------------------|
+| ---------- | --------------------- | -------------------------- |
 | "Find docs about *machin lerning*" | ❌ No fuzzy support | ✅ `fuzzy: {maxEdits: 2}` |
 | "Exact phrase 'machine learning'" | ❌ Vector similarity only | ✅ `phrase: {slop: 0}` |
 | "Tags matching tech*" | ❌ No wildcards | ✅ `wildcard: {query: "tech*"}` |
@@ -190,12 +192,13 @@ results = await rag.query(
 ### $meta Score Fields Reference
 
 ```python
-# CRITICAL: Each operator uses a DIFFERENT $meta field!
+# $vectorSearch and $search use operator-specific $meta keywords.
+# $rankFusion and $scoreFusion both expose the combined score via "score".
 OPERATOR_SCORE_FIELDS = {
-    "$vectorSearch":        "vectorSearchScore",   # Legacy
-    "$search.vectorSearch": "searchScore",         # MongoDB 8.2+
-    "$rankFusion":          "rankFusionScore",
-    "$scoreFusion":         "scoreFusionScore",
+    "$vectorSearch":        "vectorSearchScore",   # legacy $vectorSearch stage
+    "$search.vectorSearch": "searchScore",         # MongoDB 8.2+ $search.vectorSearch
+    "$rankFusion":          "score",               # MongoDB 8.0+ (also "scoreDetails")
+    "$scoreFusion":         "score",               # MongoDB 8.3+ (also "scoreDetails")
 }
 ```
 
@@ -244,33 +247,63 @@ OPERATOR_SCORE_FIELDS = {
 
 ## 🚀 Quick Start
 
-### Installation
+### See MongoDB value in 60 seconds (no API keys, no signup)
+
+**Prerequisites:** Python 3.11+ and Docker Desktop (running).
 
 ```bash
-# Clone and install
 git clone https://github.com/romiluz13/Hybrid-Search-RAG.git
 cd Hybrid-Search-RAG
 
-# First-time setup (recommended)
-make first-time-setup
+# Create a virtual environment and install (one-time)
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[all]"            # or just run: make first-time-setup
 
-# Or manual installation
-pip install -e ".[all]"
+make demo                         # starts local MongoDB + runs the showcase
 ```
 
-### Configuration
+`make demo` brings up a local MongoDB (`mongodb/mongodb-atlas-local:preview` via
+Docker) and runs the **real** MongoDB 8.2+ native hybrid-search pipeline against
+seeded data — no Voyage key, no LLM key, no Atlas account. You see:
+
+- `$vectorSearch` — semantic nearest neighbors (cosine)
+- `$search` — lexical / BM25
+- `$rankFusion` — native hybrid search merging vector + lexical via RRF
+- `$graphLookup` — knowledge-graph traversal in one pipeline
+
+> The demo uses sample vectors (labeled). In production, embeddings come from
+> Voyage AI — that's the `make demo-full` path below.
+
+### Full generative RAG (bring Voyage + LLM keys)
 
 ```bash
-# Create .env file
-cat > .env << EOF
-MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net
-MONGODB_DATABASE=hybridrag
-VOYAGE_API_KEY=pa-xxxxxxxxxxxxx
-OPENAI_API_KEY=sk-xxxxxxxxxxxxx
-EOF
+# 1. Configure API keys
+cp .env.example .env              # MONGODB_URI defaults to local; add your keys
+#    Required: VOYAGE_API_KEY (https://dash.voyageai.com/)
+#    Required: one LLM key — set LLM_PROVIDER to match:
+#              - anthropic (default) — ANTHROPIC_API_KEY
+#              - openai              — OPENAI_API_KEY
+#              - gemini              — GEMINI_API_KEY
+#              - grove               — GROVE_API_KEY + GROVE_BASE_URL
+#                (MongoDB internal OpenAI-compatible gateway; for SAs
+#                 without an OpenAI/Anthropic key)
+
+# 2. Run full RAG (ingests real Voyage embeddings + generates an answer)
+make demo-full
+
+# 3. Or start a server
+make run-api        # FastAPI  → http://localhost:8000  (/health, /docs)
+make run-ui         # Chainlit → http://localhost:8001
+make run-cli        # interactive CLI
 ```
 
-### Canonical Query Paths
+> **macOS + Atlas SSL note:** if you hit `SSL: CERTIFICATE_VERIFY_FAILED`
+> against Atlas (common with python.org Python, which doesn't bundle CA
+> certs), HybridRAG now automatically uses `certifi`'s CA bundle for
+> `mongodb+srv://` connections. No action needed. For a corporate/custom CA,
+> set `MONGODB_TLS_CA_FILE=/path/to/your-ca.pem`.
+
+### Canonical Query Paths (Python SDK)
 
 ```python
 # Simple answer
@@ -360,7 +393,7 @@ hybridrag benchmark
 ## 📊 Query Modes
 
 | Mode | Description | Use Case |
-|------|-------------|----------|
+| ------ | ------------- | ---------- |
 | `mix` | KG + Vector + Keyword | **Recommended** - General queries |
 | `hybrid` | Vector + Keyword ($rankFusion) | Fast hybrid search |
 | `local` | Entity-focused retrieval | Specific entities |
@@ -410,7 +443,7 @@ hybridrag benchmark
 ## 📚 Documentation
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | **[Cookbook](docs/cookbook/)** | **8 production recipes** for building AI apps |
 | [Installation Guide](docs/installation.md) | Setup and configuration |
 | [Architecture Decisions](docs/adr/) | ADRs for key decisions |
@@ -421,7 +454,7 @@ hybridrag benchmark
 ### Cookbook Recipes
 
 | Recipe | Topic | Description |
-|--------|-------|-------------|
+| -------- | ------- | ------------- |
 | [01](docs/cookbook/01-hybrid-search.md) | Hybrid Search | MongoDB $rankFusion implementation |
 | [02](docs/cookbook/02-lexical-prefilters.md) | Lexical Prefilters | MongoDB 8.2 fuzzy/phrase/wildcard/geo |
 | [03](docs/cookbook/03-conversation-memory.md) | Conversation Memory | Multi-turn chat with self-compaction |
@@ -467,7 +500,7 @@ make ci
 ## 📊 Why MongoDB Over Postgres?
 
 | Task | Postgres + pgvector | HybridRAG + MongoDB |
-|------|---------------------|---------------------|
+| ------ | --------------------- | --------------------- |
 | Add metadata field | `ALTER TABLE` + backfill + reindex | Just add it |
 | Change embedding model | Rewrite entire table (MVCC bloat) | Bulk update, no rewrite |
 | Hybrid search | Manual result merging in app code | Single `$rankFusion` pipeline |

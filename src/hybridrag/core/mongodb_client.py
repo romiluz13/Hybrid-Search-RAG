@@ -12,11 +12,41 @@ Uses pymongo.AsyncMongoClient (replacing deprecated Motor AsyncIOMotorClient).
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 from pymongo import AsyncMongoClient
 from pymongo.read_concern import ReadConcern
 from pymongo.write_concern import WriteConcern
+
+
+def _tls_kwargs(uri: str, *, tls_flag: bool = False) -> dict[str, Any]:
+    """Build TLS kwargs for MongoClient, fixing macOS + python.org CA issues.
+
+    On macOS with python.org Python, the system CA trust store is not available
+    to the ssl module, so Atlas (mongodb+srv://) connections fail with
+    ``SSL: CERTIFICATE_VERIFY_FAILED``. We pass ``tlsCAFile`` from certifi for
+    TLS connections. Override with the ``MONGODB_TLS_CA_FILE`` env var (e.g. for
+    corporate custom CAs). On Linux/Windows the system store usually works, but
+    certifi is a safe superset so we apply it for TLS connections everywhere.
+    """
+    del tls_flag  # kept for API stability; URI inspection decides TLS
+    # Connection-string options are case-insensitive per the URI spec.
+    uri_lower = uri.lower()
+    uses_tls = (
+        uri_lower.startswith("mongodb+srv://")
+        or "tls=true" in uri_lower
+        or "ssl=true" in uri_lower
+    )
+    if not uses_tls:
+        return {}
+    try:
+        import certifi
+    except ImportError:  # pragma: no cover - certifi is a declared core dep
+        return {}
+    ca = os.environ.get("MONGODB_TLS_CA_FILE") or certifi.where()
+    return {"tlsCAFile": ca}
+
 
 if TYPE_CHECKING:
     from pymongo.asynchronous.database import AsyncDatabase
@@ -47,8 +77,9 @@ def get_shared_client(settings: Settings) -> AsyncMongoClient:
     """
     global _shared_client
     if _shared_client is None:
+        uri = settings.mongodb_uri.get_secret_value()
         _shared_client = AsyncMongoClient(
-            settings.mongodb_uri.get_secret_value(),
+            uri,
             maxPoolSize=settings.mongodb_max_pool_size,
             minPoolSize=settings.mongodb_min_pool_size,
             maxIdleTimeMS=settings.mongodb_max_idle_time_ms,
@@ -57,6 +88,7 @@ def get_shared_client(settings: Settings) -> AsyncMongoClient:
             retryWrites=True,
             retryReads=True,
             appName="hybridrag",
+            **_tls_kwargs(uri, tls_flag=settings.mongodb_tls),
         )
         logger.info(
             "[CLIENT] Shared AsyncMongoClient created "
@@ -122,6 +154,7 @@ def create_motor_client(
         maxPoolSize=max_pool_size,
         minPoolSize=min_pool_size,
         maxIdleTimeMS=max_idle_time_ms,
+        **_tls_kwargs(uri),
         **kwargs,
     )
 

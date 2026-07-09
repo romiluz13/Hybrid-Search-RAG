@@ -9,7 +9,7 @@
 #
 # Reference: https://github.com/romiluz13/Hybrid-Search-RAG
 
-.PHONY: help setup install dev test lint format clean build docker run-api run-ui example-smoke contract-tests release-gate-fast release-gate-live test-integration test-cov test-quick
+.PHONY: help setup install install-dev install-all mongo-up mongo-down demo demo-full notebooks-setup first-time-setup dev test lint format clean build docker run-api run-ui example-smoke contract-tests release-gate-fast release-gate-live test-integration test-cov test-quick
 
 # Default target
 .DEFAULT_GOAL := help
@@ -40,7 +40,7 @@ help: ## Show this help message
 	@echo "  make $(YELLOW)<target>$(NC)"
 	@echo ""
 	@echo "$(GREEN)Setup & Install:$(NC)"
-	@grep -E '^(setup|install|install-dev|install-all|first-time-setup):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-18s$(NC) %s\n", $$1, $$2}'
+	@grep -E '^(setup|install|install-dev|install-all|mongo-up|mongo-down|demo|demo-full|first-time-setup|notebooks-setup):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-18s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(GREEN)Development:$(NC)"
 	@grep -E '^(dev|run-api|run-ui|run-cli|notebooks):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-18s$(NC) %s\n", $$1, $$2}'
@@ -88,33 +88,61 @@ install-dev: ## Install with development tools
 install-all: ## Install all dependencies (including optional)
 	@$(PIP) install -e ".[all]"
 
-first-time-setup: ## Complete setup for new developers
+mongo-up: ## Start local MongoDB (atlas-local:preview on mongodb://localhost:27018)
+	@echo "$(BLUE)Starting local MongoDB (atlas-local:preview)...$(NC)"
+	@docker compose -f docker/docker-compose.local.yml up -d
+	@echo "$(GREEN)Waiting for MongoDB to be healthy...$(NC)"
+	@for i in $$(seq 1 30); do \
+		h=$$(docker inspect --format '{{.State.Health.Status}}' hybridrag-mongodb-atlas-local-preview 2>/dev/null); \
+		if [ "$$h" = "healthy" ]; then echo "$(GREEN)MongoDB ready on mongodb://localhost:27018$(NC)"; break; fi; \
+		sleep 2; \
+	done
+
+mongo-down: ## Stop local MongoDB
+	@docker compose -f docker/docker-compose.local.yml down
+
+# Python interpreter used by demo targets: prefer the project venv, fall back to
+# the active/system python3 so `make demo` works even without a .venv (e.g. when
+# a user ran `pip install -e ".[all]"` directly instead of make first-time-setup).
+DEMO_PY := $(shell if [ -x "$(VENV)/bin/python" ]; then echo "$(VENV)/bin/python"; else echo "python3"; fi)
+
+demo: ## See MongoDB hybrid search in 60s (NO API keys; starts local MongoDB)
+	@echo "$(BLUE)HybridRAG demo — no API keys required$(NC)"
+	@make mongo-up
+	@$(DEMO_PY) scripts/demo.py
+
+demo-full: ## Full generative RAG demo (requires VOYAGE_API_KEY + LLM key in .env)
+	@echo "$(BLUE)HybridRAG full demo — requires VOYAGE_API_KEY + LLM key in .env$(NC)"
+	@make mongo-up
+	@$(DEMO_PY) examples/01_quickstart.py
+
+notebooks-setup: ## Install Jupyter Lab for the notebooks
+	@$(PIP) install jupyterlab ipykernel
+
+first-time-setup: ## Complete setup for new developers (ends with a working demo)
 	@echo "$(BLUE)First-time HybridRAG setup...$(NC)"
 	@echo ""
-	@echo "$(GREEN)Step 1/5: Running setup.sh$(NC)"
+	@echo "$(GREEN)Step 1/4: Installing dependencies$(NC)"
 	@./setup.sh --all || true
 	@echo ""
-	@echo "$(GREEN)Step 2/5: Installing pre-commit$(NC)"
+	@echo "$(GREEN)Step 2/4: Installing pre-commit hooks$(NC)"
 	@$(PIP) install pre-commit
-	@$(VENV)/bin/pre-commit install
-	@echo "$(GREEN)Pre-commit hooks installed$(NC)"
+	@$(VENV)/bin/pre-commit install || true
 	@echo ""
-	@echo "$(GREEN)Step 3/5: Installing Jupyter Lab$(NC)"
-	@$(PIP) install jupyterlab ipykernel
+	@echo "$(GREEN)Step 3/4: Starting local MongoDB$(NC)"
+	@make mongo-up || echo "$(YELLOW)Could not start MongoDB. Start Docker Desktop then run: make demo$(NC)"
 	@echo ""
-	@echo "$(GREEN)Step 4/5: Checking MongoDB connection$(NC)"
-	@make atlas-check || echo "$(YELLOW)MongoDB not configured yet - edit .env$(NC)"
-	@echo ""
-	@echo "$(GREEN)Step 5/5: Running quick test$(NC)"
-	@make test-quick || echo "$(YELLOW)Tests not passing yet$(NC)"
+	@echo "$(GREEN)Step 4/4: Running the no-keys demo (see MongoDB value now)$(NC)"
+	@$(DEMO_PY) scripts/demo.py || echo "$(YELLOW)Demo needs Docker running: start Docker Desktop then 'make demo'$(NC)"
 	@echo ""
 	@echo "$(GREEN)========================================$(NC)"
 	@echo "$(GREEN)Setup complete!$(NC)"
 	@echo ""
 	@echo "$(BLUE)Next steps:$(NC)"
-	@echo "  1. Edit $(YELLOW).env$(NC) with your API keys"
-	@echo "  2. Run $(YELLOW)make notebooks$(NC) to explore examples"
-	@echo "  3. Run $(YELLOW)make dev$(NC) to verify installation"
+	@echo "  1. $(YELLOW)make demo$(NC)        — re-run the no-keys MongoDB demo"
+	@echo "  2. Edit $(YELLOW).env$(NC)        — add VOYAGE_API_KEY + an LLM key"
+	@echo "  3. $(YELLOW)make demo-full$(NC)   — full generative RAG (needs keys)"
+	@echo "  4. $(YELLOW)make run-api$(NC)     — start the FastAPI server"
 	@echo "$(GREEN)========================================$(NC)"
 	@echo ""
 
@@ -237,28 +265,34 @@ clean: ## Clean build artifacts and caches
 # MongoDB Atlas Setup
 #---------------------------------------------------------------------------
 
-atlas-check: ## Check MongoDB connection
-	@echo "$(BLUE)Checking MongoDB Atlas connection...$(NC)"
+atlas-check: ## Check MongoDB connection (TLS/certifi-aware; works with Atlas on macOS)
+	@echo "$(BLUE)Checking MongoDB connection...$(NC)"
 	@$(VENV)/bin/python -c "\
 from hybridrag.config import get_settings; \
+from hybridrag.core.mongodb_client import _tls_kwargs; \
 from pymongo import MongoClient; \
 s = get_settings(); \
-c = MongoClient(s.mongodb_uri.get_secret_value(), serverSelectionTimeoutMS=5000, connectTimeoutMS=5000); \
+uri = s.mongodb_uri.get_secret_value(); \
+c = MongoClient(uri, serverSelectionTimeoutMS=5000, connectTimeoutMS=5000, **_tls_kwargs(uri, tls_flag=s.mongodb_tls)); \
 print(f'Connected to: {c.server_info()[\"version\"]}'); \
-print(f'Database: {s.mongodb_database}')"
+print(f'Database: {s.mongodb_database}'); \
+c.close()"
 
-atlas-indexes: ## Show MongoDB Atlas index status
+atlas-indexes: ## Show MongoDB Atlas index status (TLS/certifi-aware)
 	@echo "$(BLUE)Checking Atlas Search indexes...$(NC)"
 	@$(VENV)/bin/python -c "\
 from hybridrag.config import get_settings; \
+from hybridrag.core.mongodb_client import _tls_kwargs; \
 from pymongo import MongoClient; \
 s = get_settings(); \
-c = MongoClient(s.MONGODB_URI); \
-db = c[s.MONGODB_DATABASE]; \
+uri = s.mongodb_uri.get_secret_value(); \
+c = MongoClient(uri, **_tls_kwargs(uri, tls_flag=s.mongodb_tls)); \
+db = c[s.mongodb_database]; \
 for coll in db.list_collection_names(): \
     print(f'\\n{coll}:'); \
     for idx in db[coll].list_indexes(): \
-        print(f'  - {idx[\"name\"]}')"
+        print(f'  - {idx[\"name\"]}'); \
+c.close()"
 
 #---------------------------------------------------------------------------
 # Quick Commands

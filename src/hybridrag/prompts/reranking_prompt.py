@@ -24,11 +24,11 @@ Usage:
 from __future__ import annotations
 
 import re
-from enum import Enum
+from enum import StrEnum
 from typing import Final
 
 
-class QueryType(str, Enum):
+class QueryType(StrEnum):
     """Query type classification for reranking instruction selection."""
 
     GENERAL = "general"

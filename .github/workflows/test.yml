@@ -3,7 +3,7 @@ name: Test
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # Daily at midnight UTC
+    - cron: "0 0 * * *" # Daily at midnight UTC
 
 jobs:
   full-test-suite:
@@ -15,7 +15,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -31,8 +31,7 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           OPENAI_EXTRA_HEADERS: ${{ secrets.OPENAI_EXTRA_HEADERS }}
         run: |
-          pytest tests/ -v \
-            --ignore=tests/integration/ \
+          pytest tests/ -v -m "not integration" \
             --ignore=tests/benchmarks/ \
             --ignore=tests/e2e_real_test.py \
             --cov=src/hybridrag \
@@ -50,11 +49,12 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `Daily CI failed - ${new Date().toISOString().split('T')[0]}`,
-              body: `Daily test suite failed.\n\nWorkflow: ${context.workflow}\nRun: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              body: `Daily test suite failed.\n\nWorkflow: ${context.workflow}\nRun: ${runUrl}`,
               labels: ['ci-failure']
             })
 
@@ -72,7 +72,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -100,7 +100,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -125,13 +125,18 @@ jobs:
   benchmark:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongodb/mongodb-atlas-local:preview
+        ports:
+          - 27018:27017
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -141,9 +146,13 @@ jobs:
 
       - name: Run benchmarks
         env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_URI: mongodb://localhost:27018/?directConnection=true
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
         run: |
+          if [ -z "$VOYAGE_API_KEY" ]; then
+            echo "VOYAGE_API_KEY not configured; skipping benchmarks."
+            exit 0
+          fi
           pytest tests/benchmarks/ \
             -v \
             -m benchmark \

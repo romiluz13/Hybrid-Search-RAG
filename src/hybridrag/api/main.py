@@ -101,11 +101,25 @@ def get_rag() -> HybridRAG:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan manager."""
+    """Application lifespan manager.
+
+    The RAG system is initialized at startup when possible. If MongoDB or API
+    keys are not configured yet, the app still boots in degraded mode so /health
+    and /docs remain reachable with an actionable message.
+    """
     global _rag
 
-    # Startup: Initialize HybridRAG
-    _rag = await create_hybridrag(auto_initialize=True)
+    # Startup: Initialize HybridRAG (degrade gracefully if not configured)
+    try:
+        _rag = await create_hybridrag(auto_initialize=True)
+    except Exception as exc:
+        logger.warning(
+            "RAG system not initialized at startup: %s. "
+            "Configure MONGODB_URI and API keys in .env, then restart. "
+            "API is running in degraded mode (/health reports 'degraded').",
+            exc,
+        )
+        _rag = None
 
     yield
 
