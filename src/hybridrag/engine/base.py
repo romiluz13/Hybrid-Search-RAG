@@ -4,7 +4,7 @@ import os
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import (
     Any,
     Literal,
@@ -662,7 +662,7 @@ class BaseGraphStorage(StorageNameSpace, ABC):
         """
 
 
-class DocStatus(str, Enum):
+class DocStatus(StrEnum):
     """Document processing status"""
 
     PENDING = "pending"
@@ -782,7 +782,7 @@ class DocStatusStorage(BaseKVStorage, ABC):
         """
 
 
-class StoragesStatus(str, Enum):
+class StoragesStatus(StrEnum):
     """Storages status"""
 
     NOT_CREATED = "not_created"

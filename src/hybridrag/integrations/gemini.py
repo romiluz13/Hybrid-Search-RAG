@@ -17,14 +17,6 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-import pipmaster as pm
-
-# Install the Google Gemini client and its dependencies on demand
-if not pm.is_installed("google-genai"):
-    pm.install("google-genai")
-if not pm.is_installed("google-api-core"):
-    pm.install("google-api-core")
-
 from google import genai  # type: ignore
 from google.genai import types  # type: ignore
 

@@ -44,7 +44,12 @@ def _resolve_test_mongodb_uri() -> str:
 
 @pytest.fixture
 def require_mongodb_uri() -> None:
-    """Fail fast when MongoDB-backed tests run without a connection string."""
+    """Skip when MongoDB-backed tests run without a connection string.
+
+    Integration tests need a live MongoDB. If none is available, skip (don't
+    error) so unit-test runs stay green. The live release gate uses its own
+    require_env and is unaffected.
+    """
     if os.getenv("HYBRIDRAG_TEST_MONGODB_URI") or os.getenv("MONGODB_URI"):
         return
 
@@ -55,9 +60,10 @@ def require_mongodb_uri() -> None:
         with socket.create_connection(("localhost", 27018), timeout=1):
             return
     except OSError as exc:
-        pytest.fail(
+        pytest.skip(
             "No MongoDB test URI provided and no local MongoDB found on "
-            f"localhost:27018 ({exc})"
+            f"localhost:27018 ({exc}). Start it with: "
+            "docker compose -f docker/docker-compose.local.yml up -d"
         )
 
 

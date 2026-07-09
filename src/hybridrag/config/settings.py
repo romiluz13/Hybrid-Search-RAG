@@ -20,10 +20,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # MongoDB Atlas
+    # MongoDB Atlas — defaults to the local atlas-local:preview stack so the
+    # API/CLI/demo boot out-of-the-box. Set MONGODB_URI in .env for Atlas/cloud.
     mongodb_uri: SecretStr = Field(
-        ...,
-        description="MongoDB Atlas connection URI",
+        default=SecretStr("mongodb://localhost:27018/?directConnection=true"),
+        description="MongoDB connection URI. Defaults to local atlas-local:preview; set MONGODB_URI in .env for Atlas/cloud.",
     )
 
     # [M2] Validate URI starts with mongodb:// or mongodb+srv://

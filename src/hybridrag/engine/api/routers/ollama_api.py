@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 import time
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -16,7 +16,7 @@ from .utils_api import get_combined_auth_dependency
 
 
 # query mode according to query prefix (bypass is not HybridRAG query mode)
-class SearchMode(str, Enum):
+class SearchMode(StrEnum):
     naive = "naive"
     local = "local"
     global_ = "global"
