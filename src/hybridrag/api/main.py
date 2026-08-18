@@ -13,16 +13,28 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import time
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from .. import __version__
 from ..core.mongodb_client import close_shared_client
 from ..core.rag import HybridRAG, create_hybridrag
+from ..engine.exceptions import (
+    RetrievalCapabilityError,
+    RetrievalExecutionError,
+    RetrievalValidationError,
+)
+from ..engine.security import (
+    api_key_security_context,
+    reset_request_security_context,
+    set_request_security_context,
+)
 from .models import (
     ErrorResponse,
     HealthResponse,
@@ -38,29 +50,60 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("hybridrag.api")
 
-__version__ = "0.2.0"
-
 # Global RAG instance
 _rag: HybridRAG | None = None
 _rate_limit_state: dict[str, list[float]] = {}
+
+
+def _retrieval_http_exception(error: Exception) -> HTTPException:
+    if isinstance(error, RetrievalValidationError):
+        return HTTPException(
+            status_code=400,
+            detail={
+                "code": "retrieval_validation_error",
+                "message": str(error),
+            },
+        )
+    if isinstance(error, RetrievalCapabilityError):
+        return HTTPException(
+            status_code=422,
+            detail={
+                "code": "retrieval_capability_error",
+                "message": str(error),
+            },
+        )
+    return HTTPException(
+        status_code=502,
+        detail={
+            "code": "retrieval_execution_error",
+            "message": "Retrieval backend failed",
+        },
+    )
 
 
 def _get_api_key() -> str | None:
     return os.environ.get("HYBRIDRAG_API_KEY")
 
 
+def _get_env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _get_rate_limit_per_window() -> int:
-    return int(os.environ.get("HYBRIDRAG_RATE_LIMIT_PER_WINDOW", "0"))
+    return _get_env_int("HYBRIDRAG_RATE_LIMIT_PER_WINDOW", 0)
 
 
 def _get_rate_limit_window_seconds() -> int:
-    return int(os.environ.get("HYBRIDRAG_RATE_LIMIT_WINDOW_SECONDS", "60"))
+    return _get_env_int("HYBRIDRAG_RATE_LIMIT_WINDOW_SECONDS", 60)
 
 
 async def guard_request(
     request: Request,
     x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
-) -> None:
+) -> AsyncGenerator[None, None]:
     """Optional auth and rate-limit seam for the public reference API."""
     required_api_key = _get_api_key()
     if required_api_key and x_api_key != required_api_key:
@@ -70,23 +113,52 @@ async def guard_request(
         )
 
     rate_limit = _get_rate_limit_per_window()
-    if rate_limit <= 0:
-        return
+    if rate_limit > 0:
+        window_seconds = _get_rate_limit_window_seconds()
+        client_host = request.client.host if request.client else "unknown"
+        now = time.time()
+        recent_requests = _rate_limit_state.setdefault(client_host, [])
+        cutoff = now - window_seconds
+        recent_requests[:] = [stamp for stamp in recent_requests if stamp >= cutoff]
 
-    window_seconds = _get_rate_limit_window_seconds()
-    client_host = request.client.host if request.client else "unknown"
-    now = time.time()
-    recent_requests = _rate_limit_state.setdefault(client_host, [])
-    cutoff = now - window_seconds
-    recent_requests[:] = [stamp for stamp in recent_requests if stamp >= cutoff]
+        if len(recent_requests) >= rate_limit:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded for this API instance",
+            )
 
-    if len(recent_requests) >= rate_limit:
+        recent_requests.append(now)
+
+    try:
+        security_context = api_key_security_context(x_api_key)
+    except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded for this API instance",
-        )
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from None
 
-    recent_requests.append(now)
+    context_token = set_request_security_context(security_context)
+    try:
+        yield
+    finally:
+        reset_request_security_context(context_token)
+
+
+async def guard_operator_request(
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> None:
+    """Require a configured API key for detailed operational diagnostics."""
+    required_api_key = os.environ.get("HYBRIDRAG_OPERATOR_API_KEY")
+    if not required_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Operational diagnostics require HYBRIDRAG_OPERATOR_API_KEY",
+        )
+    if x_api_key is None or not secrets.compare_digest(x_api_key, required_api_key):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or missing operator X-API-Key",
+        )
 
 
 def get_rag() -> HybridRAG:
@@ -236,6 +308,7 @@ def register_routes(app: FastAPI) -> None:
             await rag.insert(
                 documents=request.documents,
                 ids=request.ids,
+                metadata=request.metadata,
             )
 
             return IngestResponse(
@@ -288,6 +361,13 @@ def register_routes(app: FastAPI) -> None:
                     query=request.query,
                     mode=request.mode,
                     top_k=request.top_k,
+                    rerank_top_k=request.rerank_top_k,
+                    enable_rerank=request.enable_rerank,
+                    filter_config=request.filter_config,
+                    fusion_strategy=request.fusion_strategy,
+                    vector_search_mode=request.vector_search_mode,
+                    rerank_strategy=request.rerank_strategy,
+                    native_rerank_model=request.native_rerank_model,
                 )
                 return QueryResponse(
                     answer=result["answer"],
@@ -305,13 +385,26 @@ def register_routes(app: FastAPI) -> None:
                     },
                 )
             else:
+                retrieval_options: dict[str, Any] = {}
+                if request.filter_config is not None:
+                    retrieval_options["filter_config"] = request.filter_config
+                if request.fusion_strategy is not None:
+                    retrieval_options["fusion_strategy"] = request.fusion_strategy
+                retrieval_options["vector_search_mode"] = request.vector_search_mode
+                retrieval_options["rerank_strategy"] = request.rerank_strategy
+                retrieval_options["native_rerank_model"] = request.native_rerank_model
                 answer = await rag.query(
                     query=request.query,
                     mode=request.mode,
                     top_k=request.top_k,
                     rerank_top_k=request.rerank_top_k,
                     enable_rerank=request.enable_rerank,
+                    **retrieval_options,
                 )
+                if not isinstance(answer, str):
+                    raise ValueError(
+                        "Non-streaming endpoint received a streaming response"
+                    )
                 return QueryResponse(
                     answer=answer,
                     references=[],
@@ -321,6 +414,8 @@ def register_routes(app: FastAPI) -> None:
                         "rerank_top_k": request.rerank_top_k,
                     },
                 )
+        except (RetrievalCapabilityError, RetrievalExecutionError) as e:
+            raise _retrieval_http_exception(e) from None
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from None
         except Exception as e:
@@ -361,7 +456,14 @@ def register_routes(app: FastAPI) -> None:
                 enable_rerank=request.enable_rerank,
                 include_context=request.include_context,
                 include_references=request.include_references,
+                filter_config=request.filter_config,
+                fusion_strategy=request.fusion_strategy,
+                vector_search_mode=request.vector_search_mode,
+                rerank_strategy=request.rerank_strategy,
+                native_rerank_model=request.native_rerank_model,
             )
+        except (RetrievalCapabilityError, RetrievalExecutionError) as e:
+            raise _retrieval_http_exception(e) from None
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from None
         except Exception as e:
@@ -372,7 +474,7 @@ def register_routes(app: FastAPI) -> None:
             ) from None
 
         async def stream_generator():
-            envelope = {
+            envelope: dict[str, Any] = {
                 "metadata": {
                     "mode": result["mode"],
                     "top_k": request.top_k,
@@ -403,6 +505,57 @@ def register_routes(app: FastAPI) -> None:
                 "X-Accel-Buffering": "no",
             },
         )
+
+    @app.post(
+        "/v1/query/explain",
+        dependencies=[Depends(guard_operator_request)],
+        tags=["query"],
+    )
+    async def explain_query(request: QueryRequest) -> dict[str, Any]:
+        """Execute a redacted MongoDB explanation for the effective pipeline."""
+        rag = get_rag()
+        options: dict[str, Any] = {}
+        if request.filter_config is not None:
+            options["filter_config"] = request.filter_config
+        if request.fusion_strategy is not None:
+            options["fusion_strategy"] = request.fusion_strategy
+        options["vector_search_mode"] = request.vector_search_mode
+        options["rerank_strategy"] = request.rerank_strategy
+        options["native_rerank_model"] = request.native_rerank_model
+        options["enable_rerank"] = request.enable_rerank
+        try:
+            return await rag.explain_query(
+                request.query,
+                mode=request.mode,
+                top_k=request.top_k,
+                **options,
+            )
+        except (RetrievalCapabilityError, RetrievalExecutionError) as exc:
+            raise _retrieval_http_exception(exc) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        except Exception as exc:
+            logger.error(f"Query explain error: {exc}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail="Internal server error during query explanation",
+            ) from None
+
+    @app.get(
+        "/v1/search-indexes",
+        dependencies=[Depends(guard_operator_request)],
+        tags=["diagnostics"],
+    )
+    async def list_search_indexes() -> list[dict[str, Any]]:
+        """Return stable search-index readiness records."""
+        try:
+            return await get_rag().list_search_indexes()
+        except Exception as exc:
+            logger.error(f"Search index status error: {exc}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail="Internal server error while reading search indexes",
+            ) from None
 
     @app.delete(
         "/v1/documents/{doc_id}",

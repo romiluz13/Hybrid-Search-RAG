@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mongodb-hybridrag"
-version = "0.3.0"
+version = "0.4.0"
 description = "MongoDB-native AI application starter with hybrid search, graphs, and live validation"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [{ name = "MongoDB", email = "devrel@mongodb.com" }]
 keywords = [
@@ -24,7 +24,6 @@ keywords = [
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
@@ -68,7 +67,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-api = ["fastapi>=0.109.0", "uvicorn>=0.27.0"]
+api = [
+  "ascii_colors>=0.11.0",
+  "fastapi>=0.109.0",
+  "PyJWT>=2.8.0",
+  "python-multipart>=0.0.9",
+  "uvicorn>=0.27.0",
+]
 ui = ["chainlit>=1.0.0", "pymupdf>=1.23.0"]
 cli = ["rich>=13.0.0", "typer>=0.9.0"]
 ingestion = [

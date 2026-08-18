@@ -1,242 +1,88 @@
-# HybridRAG - AI Development Instructions
+# HybridRAG Development Guide
 
-## CRITICAL: What We Are Building
+HybridRAG is a Python library that combines MongoDB search, knowledge-graph retrieval, Voyage embeddings/reranking, and pluggable LLM generation. The LightRAG-derived engine is bundled under `src/hybridrag/engine/`; there is no separate fork checkout in the current development workflow.
 
-**We are enhancing LightRAG (existing open-source project, 25K+ stars) with:**
-1. **MongoDB Atlas** storage (instead of default file-based)
-2. **Voyage AI** embeddings (instead of OpenAI)
-3. **Voyage AI** reranking (rerank-2.5)
-4. **Our enhancements**: Implicit expansion, entity boosting, contextualized embeddings
+## Architecture
 
-**We are NOT building a new RAG system from scratch.**
-**We are NOT implementing "Ecphory" methodology.**
-**We ARE forking and enhancing LightRAG.**
+The public `HybridRAG` facade owns initialization, ingestion, query validation, conversation memory, diagnostics, and lifecycle operations. It delegates retrieval and generation to the bundled engine.
 
----
+MongoDB provides the storage and retrieval layers:
 
-## GOLDEN RULES
+- document/chunk, vector, graph, KV, and processing-status storage
+- vector and lexical search with score fusion by default
+- optional score fusion on supported MongoDB versions
+- graph traversal and namespace isolation
+- explicit search-index lifecycle operations
 
-1. **LightRAG IS THE BASE** - Don't reinvent what LightRAG already does
-2. **WE ONLY ADD** - MongoDB storage, Voyage AI, and our enhancements
-3. **FOLLOW RESEARCH** - The 6 docs in `research/` are the source of truth
-4. **UPDATE BUILD-PROCESS** - Track all progress and decisions
+The enhancement layer contains public search/filter models, reranking, query optimization, entity boosting, and implicit expansion. Backend-specific MongoDB filter builders are implementation details behind the public `FilterConfig` contract.
 
----
+## Source Layout
 
-## Build & Test Commands
+```text
+src/hybridrag/
+├── core/           # Public facade and MongoDB client lifecycle
+├── engine/         # Bundled retrieval, KG, storage, prompt, and API engine
+├── enhancements/   # Filters, fusion helpers, boosting, optimization
+├── ingestion/      # Document, URL, chunking, and embedding pipelines
+├── integrations/   # Voyage, LLM providers, Langfuse
+├── memory/         # Conversation memory
+├── migrations/     # Explicit schema/index migration helpers
+├── prompts/        # Public prompt modules
+├── api/            # Lean FastAPI surface
+├── cli/            # Typer CLI
+└── ui/             # Chainlit interface
+```
+
+## Development Commands
+
+Use the project environment rather than a global Python installation.
 
 ```bash
-# Environment Setup
-python -m venv venv
-source venv/bin/activate  # or: venv\Scripts\activate (Windows)
-pip install -r requirements.txt
+# Focused tests
+.venv/bin/pytest tests/path/to/test.py -q
 
-# Development
-python -m pytest tests/ -v           # Run tests
-python -m pytest tests/ -v --cov     # Tests with coverage
-python -m black src/ tests/          # Format code
-python -m isort src/ tests/          # Sort imports
-python -m mypy src/                  # Type checking
+# Fast project suite
+make test-quick
 
-# LightRAG Fork
-cd lightrag-fork
-pip install -e .                     # Install in dev mode
-
-# Run Examples
-python examples/basic_usage.py       # Basic RAG test
-python examples/mongodb_test.py      # MongoDB connection test
-
-# FastAPI Server (Production)
-uvicorn src.api.main:app --reload    # Dev server
-uvicorn src.api.main:app --host 0.0.0.0 --port 8000  # Production
+# Full tests and lint
+make test
+make lint
 ```
 
----
+Integration and benchmark tests are marked separately because some require MongoDB Atlas or other external services.
 
-## Code Style
+## Working Rules
 
-- **Python**: 3.11+, type hints required
-- **Formatter**: Black (88 char line length)
-- **Imports**: isort with Black profile
-- **Naming**: `snake_case` functions, `PascalCase` classes
-- **Docs**: Google-style docstrings
+- Add public behavior test-first at the highest stable seam.
+- Preserve existing public parameter order, defaults, and return types in compatible releases.
+- Keep Vector Search MQL, Atlas Search, and lexical-prefilter syntaxes separate behind public translators.
+- Never trigger a production search-index rebuild implicitly; expose a plan and require explicit apply intent.
+- Use timezone-aware datetimes.
+- Keep credentials and `.env*` files out of commits.
+- Match current code patterns before introducing new abstractions.
 
----
+## Query Modes
 
-## Project Structure
+| Mode | Retrieval behavior |
+| --- | --- |
+| `local` | Entity-focused KG retrieval |
+| `global` | Relationship-focused KG retrieval |
+| `hybrid` | Combined local and global KG retrieval |
+| `mix` | KG retrieval plus vector/keyword chunk fusion |
+| `naive` | Vector/keyword chunk fusion without KG context |
+| `bypass` | Direct LLM generation without retrieval |
 
-```
-HybridRAG/
-├── CLAUDE.md                    # THIS FILE - AI instructions
-├── research/                    # SOURCE OF TRUTH (6 docs)
-│   ├── 00-index.md              # Navigation
-│   ├── 00-internal-knowledge-base.md  # MongoDB APIs, LightRAG internals
-│   ├── 01-core-architecture.md  # LightRAG architecture, integration points
-│   ├── 02-mongodb-voyage-integration.md  # How to plug in Voyage + MongoDB
-│   ├── 03-enhancements.md       # OUR additions on top of LightRAG
-│   └── 04-production.md         # FastAPI, Langfuse, RAGAS
-├── planning/                    # Implementation roadmap
-├── build-process/               # AI memory (progress, decisions, learnings)
-├── lightrag-fork/               # FORKED LightRAG codebase
-├── src/                         # Our enhancement code (to be built)
-└── tests/                       # Test suite (to be built)
-```
+Public metadata filters are initially supported on `naive`, where both vector and lexical evidence can enforce the same boundary. KG-backed filtering remains research-gated until entity and relationship provenance can prevent excluded sources from influencing context.
 
----
+## Testing Priorities
 
-## What LightRAG Already Provides (DON'T REBUILD)
+1. Public SDK behavior and backwards compatibility
+2. MongoDB pipeline generation with mocked collections
+3. Both HTTP request/response contracts
+4. Index planning without implicit mutation
+5. Conversation and source-reference behavior
+6. Documentation examples that reflect real query modes and model defaults
 
-LightRAG already has:
-- Entity extraction (prompts in `lightrag/prompt.py`)
-- Relationship extraction
-- Knowledge graph storage
-- Vector storage
-- 6 query modes (local, global, hybrid, naive, mix, bypass)
-- Chunking (in `lightrag/operate.py`)
-- Query processing
+## Documentation Ownership
 
-**Our job is to PLUG IN MongoDB + Voyage AI, not rebuild these.**
-
----
-
-## What WE Add (Our Enhancements)
-
-| Enhancement | Description | Doc |
-|-------------|-------------|-----|
-| MongoDB Storage | Replace file-based with MongoDB Atlas | 02-mongodb-voyage-integration.md |
-| Voyage Embeddings | voyage-3-large, voyage-context-3 | 02-mongodb-voyage-integration.md |
-| Voyage Reranking | rerank-2.5 | 02-mongodb-voyage-integration.md |
-| Implicit Expansion | Find related entities via vector similarity | 03-enhancements.md |
-| Entity Boosting | Boost chunks with relevant entities | 03-enhancements.md |
-| Contextualized Embeddings | +13% recall with voyage-context-3 | 03-enhancements.md |
-
----
-
-## Research Documentation (6 Documents)
-
-| Doc | Purpose |
-|-----|---------|
-| **00-internal-knowledge-base.md** | MongoDB APIs, LightRAG internals - **READ FIRST** |
-| **00-index.md** | Navigation and quick reference |
-| **01-core-architecture.md** | LightRAG architecture, where our code plugs in |
-| **02-mongodb-voyage-integration.md** | Voyage AI wrappers, MongoDB storage config |
-| **03-enhancements.md** | Our unique additions (implicit expansion, entity boosting) |
-| **04-production.md** | FastAPI, Langfuse, RAGAS, Docker |
-
----
-
-## Core Integration Points
-
-From LightRAG's `lightrag.py`:
-
-```python
-# WHERE OUR CODE PLUGS IN
-rag = LightRAG(  # Note: LightRAG class, not "EcphoryRAG" or "HybridRAG"
-    # Voyage AI embeddings (our addition)
-    embedding_func=create_voyage_embedding_func(),
-
-    # Voyage AI reranker (our addition)
-    rerank_model_func=create_voyage_rerank_func(),
-
-    # MongoDB storage (our addition - instead of file-based)
-    kv_storage="MongoKVStorage",
-    vector_storage="MongoVectorDBStorage",
-    graph_storage="MongoGraphStorage",
-    doc_status_storage="MongoDocStatusStorage",
-
-    # LLM (Claude)
-    llm_model_func=create_claude_llm_func(),
-)
-```
-
----
-
-## Technology Stack
-
-| Component | Technology | Notes |
-|-----------|------------|-------|
-| **Base Framework** | LightRAG | Existing project we're enhancing |
-| **Database** | MongoDB Atlas | Our replacement for file storage |
-| **Embeddings** | Voyage AI | Our replacement for OpenAI |
-| **Reranking** | Voyage AI rerank-2.5 | Our addition |
-| **LLM** | Anthropic Claude | For generation |
-| **API** | FastAPI | Production endpoints |
-| **Observability** | Langfuse | Tracing |
-| **Evaluation** | RAGAS | Testing |
-
----
-
-## Environment Variables
-
-```bash
-# MongoDB Atlas
-MONGODB_URI=mongodb+srv://...
-MONGODB_DATABASE=hybridrag
-
-# Voyage AI
-VOYAGE_API_KEY=pa-xxxxxxxxxxxxxxxxxxxxx
-
-# Anthropic
-ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxx
-
-# Langfuse (optional)
-LANGFUSE_PUBLIC_KEY=pk-lf-xxxxxxxxxxxxxxxxxxxxx
-LANGFUSE_SECRET_KEY=sk-lf-xxxxxxxxxxxxxxxxxxxxx
-```
-
----
-
-## Key LightRAG Files
-
-| File | Purpose |
-|------|---------|
-| `lightrag/lightrag.py` | Main LightRAG class (4034 lines) |
-| `lightrag/kg/mongo_impl.py` | MongoDB storage classes (2480 lines) |
-| `lightrag/base.py` | EmbeddingFunc, QueryParam definitions |
-| `lightrag/prompt.py` | Entity/relationship extraction prompts |
-| `lightrag/operate.py` | Chunking, query operations |
-
----
-
-## Query Modes (Built into LightRAG)
-
-| Mode | Description |
-|------|-------------|
-| `local` | Entity-focused retrieval |
-| `global` | Community summaries |
-| `hybrid` | Local + global |
-| `mix` | KG + vector (recommended) |
-| `naive` | Vector only |
-| `bypass` | Direct LLM |
-
----
-
-## Session Workflow
-
-```
-START SESSION:
-1. Read build-process/progress/ for current state
-2. Read planning/README.md - What phase is active?
-3. Read relevant research docs
-
-DURING SESSION:
-4. Execute tasks from planning phase
-5. Update build-process/ as you go
-
-END SESSION:
-6. Update build-process/progress/
-7. List pending items for next session
-```
-
----
-
-## Current Status
-
-**What We're Building**: LightRAG + MongoDB + Voyage AI enhancements
-**Research**: COMPLETE (6 focused documents)
-**Next**: Phase 1 - Fork Analysis
-**Last Updated**: 2025-12-08
-
----
-
-*This file is the AI's primary instruction set. Follow it exactly.*
+Executable behavior and tests define query semantics. The README explains supported user flows. The capability specification records the accepted roadmap boundary. ADRs preserve decisions and explicit supersessions. Deployment documentation owns Atlas backup, monitoring, security, administration, and production index operations.

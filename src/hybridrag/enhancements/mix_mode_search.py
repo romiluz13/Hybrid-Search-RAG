@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from hybridrag.engine.exceptions import RetrievalError, RetrievalExecutionError
+
 from .graph_search import (
     GraphTraversalConfig,
     expand_entities_via_graph,
@@ -32,7 +34,6 @@ from .mongodb_hybrid_search import (
     MongoDBHybridSearchConfig,
     extract_pipeline_score,
     hybrid_search_with_rank_fusion,
-    manual_hybrid_search_with_rrf,
 )
 
 if TYPE_CHECKING:
@@ -99,8 +100,8 @@ class MixModeConfig:
     # Entity-only result weight (for results found only via graph)
     entity_only_weight: float = 0.5
 
-    # Lexical prefiltering (MongoDB 8.2+)
-    use_lexical_prefilters: bool = True  # Recommended for MongoDB 8.2+
+    # Lexical prefiltering
+    use_lexical_prefilters: bool = True
     default_lexical_prefilter: LexicalPrefilterConfig | None = None
 
 
@@ -168,42 +169,23 @@ async def mix_mode_search(
 
     async def run_hybrid_search() -> None:
         nonlocal rank_fusion_results
-        try:
-            # Use default lexical prefilter if enabled in config
-            effective_lexical_filter = (
-                lexical_filter_config or config.default_lexical_prefilter
-                if config.use_lexical_prefilters
-                else None
-            )
+        effective_lexical_filter = (
+            lexical_filter_config or config.default_lexical_prefilter
+            if config.use_lexical_prefilters
+            else None
+        )
 
-            rank_fusion_results = await hybrid_search_with_rank_fusion(
-                collection=collection,
-                query_text=query,
-                query_vector=query_vector,
-                top_k=top_k * 2,  # Over-fetch for entity merging
-                config=config.hybrid_config,
-                lexical_filter_config=effective_lexical_filter,
-            )
-            logger.info(
-                f"[MIX_MODE] $rankFusion returned {len(rank_fusion_results)} results"
-            )
-        except Exception as e:
-            logger.warning(f"[MIX_MODE] $rankFusion failed, trying manual RRF: {e}")
-            try:
-                manual_results = await manual_hybrid_search_with_rrf(
-                    collection=collection,
-                    query_text=query,
-                    query_vector=query_vector,
-                    top_k=top_k * 2,
-                    config=config.hybrid_config,
-                )
-                # Convert SearchResult to dict
-                rank_fusion_results = [r.to_dict() for r in manual_results]
-                logger.info(
-                    f"[MIX_MODE] Manual RRF returned {len(rank_fusion_results)} results"
-                )
-            except Exception as rrf_err:
-                logger.error(f"[MIX_MODE] Manual RRF also failed: {rrf_err}")
+        rank_fusion_results = await hybrid_search_with_rank_fusion(
+            collection=collection,
+            query_text=query,
+            query_vector=query_vector,
+            top_k=top_k * 2,
+            config=config.hybrid_config,
+            lexical_filter_config=effective_lexical_filter,
+        )
+        logger.info(
+            f"[MIX_MODE] $rankFusion returned {len(rank_fusion_results)} results"
+        )
 
     search_tasks.append(asyncio.create_task(run_hybrid_search()))
 
@@ -258,18 +240,15 @@ async def mix_mode_search(
                         f"[MIX_MODE] Entity search added {len(entity_results)} results"
                     )
 
+            except RetrievalError:
+                raise
             except Exception as e:
-                logger.error(f"[MIX_MODE] Graph traversal failed: {e}")
+                raise RetrievalExecutionError("graph traversal failed") from e
 
         search_tasks.append(asyncio.create_task(run_graph_traversal()))
 
     # Wait for all searches to complete
-    gather_results = await asyncio.gather(*search_tasks, return_exceptions=True)
-
-    # Check for exceptions in parallel tasks
-    for i, result in enumerate(gather_results):
-        if isinstance(result, Exception):
-            logger.warning(f"[MIX_MODE] Search task {i} failed: {result}")
+    await asyncio.gather(*search_tasks)
 
     # ============================================
     # Stage 3: Merge results
@@ -449,7 +428,7 @@ class MixModeSearcher:
             top_k: Number of results
             query_entities: Entities extracted from query
             collection_name: Name of chunks collection
-            lexical_filter_config: Lexical prefilter configuration (MongoDB 8.2+)
+            lexical_filter_config: Lexical prefilter configuration
 
         Returns:
             List of MixModeSearchResult

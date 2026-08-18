@@ -39,6 +39,7 @@ from .constants import (
 from .exceptions import (
     ChunkTokenLimitExceededError,
     PipelineCancelledException,
+    RetrievalCapabilityError,
 )
 from .kg.shared_storage import get_storage_keyed_lock
 from .prompt import PROMPTS
@@ -75,6 +76,61 @@ from .utils import (
 # allows to use different .env file for each hybridrag instance
 # the OS environment variables take precedence over the .env file
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=False)
+
+
+def _cache_json_default(value: Any) -> Any:
+    if isinstance(value, set):
+        return sorted(value, key=lambda item: (type(item).__name__, str(item)))
+    if hasattr(value, "isoformat"):
+        return {
+            "type": f"{type(value).__module__}.{type(value).__qualname__}",
+            "value": value.isoformat(),
+        }
+    return {
+        "type": f"{type(value).__module__}.{type(value).__qualname__}",
+        "value": str(value),
+    }
+
+
+def _retrieval_cache_identity(
+    query_param: QueryParam,
+    global_config: dict[str, Any] | None = None,
+) -> str:
+    filter_config = query_param.filter_config
+    if hasattr(filter_config, "model_dump"):
+        filter_config = filter_config.model_dump(mode="python")
+    security_filter = None
+    if query_param.security_context is not None:
+        security_filter = [
+            mandatory_filter.model_dump(mode="python")
+            for mandatory_filter in query_param.security_context.mandatory_filters
+        ]
+    rerank_func = (global_config or {}).get("rerank_model_func")
+    external_reranker = getattr(rerank_func, "cache_identity", None)
+    if rerank_func is not None and external_reranker is None:
+        external_reranker = (
+            f"{getattr(rerank_func, '__module__', type(rerank_func).__module__)}."
+            f"{getattr(rerank_func, '__qualname__', type(rerank_func).__qualname__)}"
+        )
+    return json.dumps(
+        {
+            "schema": 3,
+            "filter": filter_config,
+            "security_filter": security_filter,
+            "fusion_strategy": _effective_fusion_strategy(query_param),
+            "vector_search_mode": query_param.vector_search_mode,
+            "rerank_strategy": query_param.rerank_strategy,
+            "native_rerank_model": query_param.native_rerank_model,
+            "external_reranker": external_reranker,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_cache_json_default,
+    )
+
+
+def _effective_fusion_strategy(query_param: QueryParam) -> Literal["rank", "score"]:
+    return query_param.fusion_strategy or "score"
 
 
 def _truncate_entity_identifier(
@@ -1212,9 +1268,11 @@ async def _rebuild_single_entity(
                 "description": final_description,
                 "entity_type": entity_type,
                 "source_id": GRAPH_FIELD_SEP.join(source_chunk_ids),
-                "file_path": GRAPH_FIELD_SEP.join(file_paths)
-                if file_paths
-                else current_entity.get("file_path", "unknown_source"),
+                "file_path": (
+                    GRAPH_FIELD_SEP.join(file_paths)
+                    if file_paths
+                    else current_entity.get("file_path", "unknown_source")
+                ),
                 "created_at": int(time.time()),
                 "truncate": truncation_info,
             }
@@ -1565,15 +1623,19 @@ async def _rebuild_single_relationship(
     # Update relationship in graph storage
     updated_relationship_data = {
         **current_relationship,
-        "description": final_description
-        if final_description
-        else current_relationship.get("description", ""),
+        "description": (
+            final_description
+            if final_description
+            else current_relationship.get("description", "")
+        ),
         "keywords": combined_keywords,
         "weight": weight,
         "source_id": GRAPH_FIELD_SEP.join(limited_chunk_ids),
-        "file_path": GRAPH_FIELD_SEP.join([fp for fp in file_paths_list if fp])
-        if file_paths_list
-        else current_relationship.get("file_path", "unknown_source"),
+        "file_path": (
+            GRAPH_FIELD_SEP.join([fp for fp in file_paths_list if fp])
+            if file_paths_list
+            else current_relationship.get("file_path", "unknown_source")
+        ),
         "truncate": truncation_info,
     }
 
@@ -3248,7 +3310,9 @@ async def kg_query(
     )
 
     # Handle cache
+    retrieval_cache_identity = _retrieval_cache_identity(query_param, global_config)
     args_hash = compute_args_hash(
+        "retrieval-cache-v3",
         query_param.mode,
         query,
         query_param.response_type,
@@ -3261,6 +3325,7 @@ async def kg_query(
         ll_keywords_str,
         query_param.user_prompt or "",
         query_param.enable_rerank,
+        retrieval_cache_identity,
     )
 
     cached_result = await handle_cache(
@@ -3295,6 +3360,7 @@ async def kg_query(
                 "ll_keywords": ll_keywords_str,
                 "user_prompt": query_param.user_prompt or "",
                 "enable_rerank": query_param.enable_rerank,
+                "retrieval_identity": retrieval_cache_identity,
             }
             await save_to_cache(
                 hashing_kv,
@@ -3499,17 +3565,47 @@ async def _get_vector_context(
         search_top_k = query_param.chunk_top_k or query_param.top_k
         cosine_threshold = chunks_vdb.cosine_better_than_threshold
 
-        # Use hybrid search with $rankFusion if available (MongoDB Atlas feature)
-        # This combines vector similarity with full-text keyword search using RRF
+        fusion_strategy = _effective_fusion_strategy(query_param)
         if hasattr(chunks_vdb, "hybrid_query"):
-            logger.info("[HYBRID_SEARCH] Using MongoDB $rankFusion for chunk retrieval")
+            logger.info(
+                "[HYBRID_SEARCH] Using MongoDB $%sFusion for chunk retrieval",
+                fusion_strategy,
+            )
             results = await chunks_vdb.hybrid_query(
-                query, top_k=search_top_k, query_embedding=query_embedding
+                query,
+                top_k=search_top_k,
+                query_embedding=query_embedding,
+                filter_config=query_param.filter_config,
+                security_context=query_param.security_context,
+                use_rank_fusion=fusion_strategy == "rank",
+                vector_search_mode=query_param.vector_search_mode,
+                native_rerank_model=(
+                    query_param.native_rerank_model
+                    if query_param.enable_rerank
+                    and query_param.rerank_strategy == "native"
+                    else None
+                ),
             )
         else:
-            # Fallback to vector-only search for non-MongoDB backends
+            if (
+                query_param.fusion_strategy is not None
+                or query_param.filter_config is not None
+                or query_param.security_context is not None
+                or query_param.vector_search_mode == "exact"
+                or (
+                    query_param.enable_rerank
+                    and query_param.rerank_strategy == "native"
+                )
+            ):
+                raise RetrievalCapabilityError(
+                    "Requested retrieval options require native hybrid retrieval"
+                )
             results = await chunks_vdb.query(
-                query, top_k=search_top_k, query_embedding=query_embedding
+                query,
+                top_k=search_top_k,
+                query_embedding=query_embedding,
+                filter_config=query_param.filter_config,
+                security_context=query_param.security_context,
             )
         if not results:
             logger.info(
@@ -3531,6 +3627,8 @@ async def _get_vector_context(
                     "hybrid_score": result.get(
                         "distance"
                     ),  # Store fusion score for analysis
+                    "fusion_score": result.get("fusion_score"),
+                    "rerank_score": result.get("rerank_score"),
                 }
                 valid_chunks.append(chunk_with_metadata)
 
@@ -3541,7 +3639,7 @@ async def _get_vector_context(
 
     except Exception as e:
         logger.error(f"Error in _get_vector_context: {e}")
-        return []
+        raise
 
 
 async def _perform_kg_search(
@@ -3578,7 +3676,16 @@ async def _perform_kg_search(
         "kg_chunk_pick_method", DEFAULT_KG_CHUNK_PICK_METHOD
     )
     query_embedding = None
-    if query and (kg_chunk_pick_method == "VECTOR" or chunks_vdb):
+    chunks_use_automated_embedding = bool(
+        chunks_vdb
+        and getattr(chunks_vdb, "global_config", {}).get("vector_embedding_backend")
+        == "automated"
+    )
+    if (
+        query
+        and (kg_chunk_pick_method == "VECTOR" or chunks_vdb)
+        and not chunks_use_automated_embedding
+    ):
         actual_embedding_func = text_chunks_db.embedding_func
         if actual_embedding_func:
             try:
@@ -5058,7 +5165,9 @@ async def naive_query(
         return QueryResult(content=prompt_content, raw_data=raw_data)
 
     # Handle cache
+    retrieval_cache_identity = _retrieval_cache_identity(query_param, global_config)
     args_hash = compute_args_hash(
+        "retrieval-cache-v3",
         query_param.mode,
         query,
         query_param.response_type,
@@ -5069,6 +5178,7 @@ async def naive_query(
         query_param.max_total_tokens,
         query_param.user_prompt or "",
         query_param.enable_rerank,
+        retrieval_cache_identity,
     )
     cached_result = await handle_cache(
         hashing_kv, args_hash, user_query, query_param.mode, cache_type="query"
@@ -5099,6 +5209,7 @@ async def naive_query(
                 "max_total_tokens": query_param.max_total_tokens,
                 "user_prompt": query_param.user_prompt or "",
                 "enable_rerank": query_param.enable_rerank,
+                "retrieval_identity": retrieval_cache_identity,
             }
             await save_to_cache(
                 hashing_kv,

@@ -3,6 +3,7 @@ HybridRAG FastAPI Server
 """
 
 import configparser
+import importlib.util
 import logging
 import logging.config
 import os
@@ -10,7 +11,6 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import pipmaster as pm
 import uvicorn
 from ascii_colors import ASCIIColors
 from dotenv import load_dotenv
@@ -25,43 +25,43 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 
-from . import RAGEngine
-from . import __version__ as core_version
-from .api import __api_version__
-from .api.auth import auth_handler
-from .api.routers.document_routes import (
-    DocumentManager,
-    create_document_routes,
-)
-from .api.routers.graph_routes import create_graph_routes
-from .api.routers.ollama_api import OllamaAPI
-from .api.routers.query_routes import create_query_routes
-from .api.utils_api import (
-    check_env_file,
-    display_splash_screen,
-    get_combined_auth_dependency,
-)
-from .config import (
-    get_default_host,
-    global_args,
-    update_uvicorn_mode_config,
-)
-from .constants import (
+from hybridrag import __version__ as core_version
+
+from .. import RAGEngine
+from ..constants import (
     DEFAULT_EMBEDDING_TIMEOUT,
     DEFAULT_LLM_TIMEOUT,
     DEFAULT_LOG_BACKUP_COUNT,
     DEFAULT_LOG_FILENAME,
     DEFAULT_LOG_MAX_BYTES,
 )
-from .kg.shared_storage import (
-    # set_default_workspace,
+from ..kg.shared_storage import (
     cleanup_keyed_lock,
     finalize_share_data,
     get_default_workspace,
     get_namespace_data,
 )
-from .types import GPTKeywordExtractionFormat
-from .utils import EmbeddingFunc, get_env_value, logger, set_verbose_debug
+from ..types import GPTKeywordExtractionFormat
+from ..utils import EmbeddingFunc, get_env_value, logger, set_verbose_debug
+from . import __api_version__
+from .auth import auth_handler
+from .config import (
+    get_default_host,
+    global_args,
+    update_uvicorn_mode_config,
+)
+from .routers.document_routes import (
+    DocumentManager,
+    create_document_routes,
+)
+from .routers.graph_routes import create_graph_routes
+from .routers.ollama_api import OllamaAPI
+from .routers.query_routes import create_query_routes
+from .utils_api import (
+    check_env_file,
+    display_splash_screen,
+    get_combined_auth_dependency,
+)
 
 # use the .env that is inside the current folder
 # allows to use different .env file for each hybridrag instance
@@ -1272,9 +1272,9 @@ def create_app(args):
                     "enable_rerank": rerank_model_func is not None,
                     "rerank_binding": args.rerank_binding,
                     "rerank_model": args.rerank_model if rerank_model_func else None,
-                    "rerank_binding_host": args.rerank_binding_host
-                    if rerank_model_func
-                    else None,
+                    "rerank_binding_host": (
+                        args.rerank_binding_host if rerank_model_func else None
+                    ),
                     # Environment variable status (requested configuration)
                     "summary_language": args.summary_language,
                     "force_llm_summary_on_merge": args.force_llm_summary_on_merge,
@@ -1459,10 +1459,10 @@ def check_and_install_dependencies():
     ]
 
     for package in required_packages:
-        if not pm.is_installed(package):
-            print(f"Installing {package}...")
-            pm.install(package)
-            print(f"{package} installed successfully")
+        if importlib.util.find_spec(package) is None:
+            raise RuntimeError(
+                f"Required server dependency is not installed: {package}"
+            )
 
 
 def main():

@@ -20,19 +20,24 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from hybridrag.enhancements.filters.metadata import (
+    normalize_document_metadata,
+    normalize_metadata_batch,
+)
+
+from ...base import DeletionResult, DocProcessingStatus, DocStatus
 from ...base_engine import BaseRAGEngine as RAGEngine
-from ..config import global_args
-from .api.utils_api import get_combined_auth_dependency
-from .base import DeletionResult, DocProcessingStatus, DocStatus
-from .utils import (
+from ...utils import (
     compute_mdhash_id,
     generate_track_id,
     get_pinyin_sort_key,
     logger,
     sanitize_text_for_encoding,
 )
+from ..config import global_args
+from ..utils_api import get_combined_auth_dependency
 
 
 @lru_cache(maxsize=1)
@@ -222,11 +227,22 @@ class InsertTextRequest(BaseModel):
         description="The text to insert",
     )
     file_source: str = Field(default=None, min_length=0, description="File Source")
+    metadata: dict[str, Any] | None = Field(
+        default=None,
+        description="Metadata stored on every chunk created from this text",
+    )
 
     @field_validator("text", mode="after")
     @classmethod
     def strip_text_after(cls, text: str) -> str:
         return text.strip()
+
+    @field_validator("metadata", mode="after")
+    @classmethod
+    def validate_metadata(
+        cls, metadata: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return normalize_document_metadata(metadata) if metadata is not None else None
 
     @field_validator("file_source", mode="after")
     @classmethod
@@ -257,6 +273,15 @@ class InsertTextsRequest(BaseModel):
     file_sources: list[str] = Field(
         default=None, min_length=0, description="Sources of the texts"
     )
+    metadata: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Optional metadata object for each text",
+    )
+
+    @model_validator(mode="after")
+    def validate_metadata_cardinality(self) -> "InsertTextsRequest":
+        self.metadata = normalize_metadata_batch(self.metadata, len(self.texts))
+        return self
 
     @field_validator("texts", mode="after")
     @classmethod
@@ -1704,6 +1729,7 @@ async def pipeline_index_texts(
     texts: list[str],
     file_sources: list[str] = None,
     track_id: str = None,
+    metadata: list[dict[str, Any]] | None = None,
 ):
     """Index a list of texts with track_id
 
@@ -1722,7 +1748,10 @@ async def pipeline_index_texts(
                 for _ in range(len(file_sources), len(texts))
             ]
     await rag.apipeline_enqueue_documents(
-        input=texts, file_paths=file_sources, track_id=track_id
+        input=texts,
+        file_paths=file_sources,
+        track_id=track_id,
+        metadata=metadata,
     )
     await rag.apipeline_process_enqueue_documents()
 
@@ -2208,6 +2237,7 @@ def create_document_routes(
                 [request.text],
                 file_sources=[request.file_source],
                 track_id=track_id,
+                metadata=[request.metadata] if request.metadata is not None else None,
             )
 
             return InsertResponse(
@@ -2291,6 +2321,7 @@ def create_document_routes(
                 request.texts,
                 file_sources=request.file_sources,
                 track_id=track_id,
+                metadata=request.metadata,
             )
 
             return InsertResponse(

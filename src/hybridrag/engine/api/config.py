@@ -9,8 +9,8 @@ import sys
 
 from dotenv import load_dotenv
 
-from .base import OllamaServerInfos
-from .constants import (
+from ..base import OllamaServerInfos
+from ..constants import (
     DEFAULT_CHUNK_TOP_K,
     DEFAULT_COSINE_THRESHOLD,
     DEFAULT_EMBEDDING_BATCH_NUM,
@@ -35,14 +35,14 @@ from .constants import (
     DEFAULT_TOP_K,
     DEFAULT_WOKERS,
 )
-from .llm.binding_options import (
+from ..llm.binding_options import (
     GeminiEmbeddingOptions,
     GeminiLLMOptions,
     OllamaEmbeddingOptions,
     OllamaLLMOptions,
     OpenAILLMOptions,
 )
-from .utils import get_env_value
+from ..utils import get_env_value
 
 # use the .env that is inside the current folder
 # allows to use different .env file for each hybridrag instance
@@ -321,7 +321,7 @@ def parse_args() -> argparse.Namespace:
     elif os.environ.get("LLM_BINDING") == "gemini":
         GeminiLLMOptions.add_args(parser)
 
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     # convert relative path to absolute path
     args.working_dir = os.path.abspath(args.working_dir)

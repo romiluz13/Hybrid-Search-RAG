@@ -5,8 +5,15 @@ import inspect
 import os
 import time
 import traceback
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from dataclasses import asdict, dataclass, field
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
 from typing import (
@@ -17,6 +24,9 @@ from typing import (
 )
 
 from dotenv import load_dotenv
+
+from hybridrag.enhancements.filters import RetrievalSecurityContext
+from hybridrag.enhancements.filters.metadata import normalize_metadata_batch
 
 from .base import (
     BaseGraphStorage,
@@ -61,7 +71,7 @@ from .constants import (
     DEFAULT_TOP_K,
     GRAPH_FIELD_SEP,
 )
-from .exceptions import PipelineCancelledException
+from .exceptions import PipelineCancelledException, RetrievalCapabilityError
 from .kg import (
     STORAGES,
     verify_storage_implementation,
@@ -83,6 +93,7 @@ from .operate import (
     rebuild_knowledge_from_chunks,
 )
 from .prompt import PROMPTS
+from .security import resolve_retrieval_security_context
 from .types import KnowledgeGraph
 from .utils import (
     EmbeddingFunc,
@@ -108,6 +119,60 @@ from .utils import (
 # allows to use different .env file for each hybridrag instance
 # the OS environment variables take precedence over the .env file
 load_dotenv(dotenv_path=".env", override=False)
+
+
+def _enforce_security_context_mode(param: QueryParam) -> None:
+    if param.security_context is not None and param.mode not in {"naive", "bypass"}:
+        raise RetrievalCapabilityError(
+            "Server-owned retrieval constraints currently require mode='naive' "
+            "for retrieval"
+        )
+
+
+def _build_document_chunks(
+    chunking_result: Sequence[Mapping[str, Any]],
+    doc_id: str,
+    file_path: str,
+    metadata: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    return {
+        compute_mdhash_id(chunk["content"], prefix="chunk-"): {
+            **chunk,
+            "full_doc_id": doc_id,
+            "file_path": file_path,
+            "metadata": dict(metadata),
+            "llm_cache_list": [],
+        }
+        for chunk in chunking_result
+    }
+
+
+def _data_query_param(param: QueryParam) -> QueryParam:
+    return QueryParam(
+        mode=param.mode,
+        only_need_context=True,
+        only_need_prompt=False,
+        response_type=param.response_type,
+        stream=False,
+        top_k=param.top_k,
+        chunk_top_k=param.chunk_top_k,
+        max_entity_tokens=param.max_entity_tokens,
+        max_relation_tokens=param.max_relation_tokens,
+        max_total_tokens=param.max_total_tokens,
+        hl_keywords=param.hl_keywords,
+        ll_keywords=param.ll_keywords,
+        conversation_history=param.conversation_history,
+        history_turns=param.history_turns,
+        model_func=param.model_func,
+        user_prompt=param.user_prompt,
+        enable_rerank=param.enable_rerank,
+        filter_config=param.filter_config,
+        fusion_strategy=param.fusion_strategy,
+        vector_search_mode=param.vector_search_mode,
+        rerank_strategy=param.rerank_strategy,
+        native_rerank_model=param.native_rerank_model,
+        security_context=param.security_context,
+    )
 
 
 @final
@@ -342,6 +407,18 @@ class BaseRAGEngine:
     vector_db_storage_cls_kwargs: dict[str, Any] = field(default_factory=dict)
     """Additional parameters for vector database storage."""
 
+    filterable_metadata_fields: dict[str, str] = field(default_factory=dict)
+    """Metadata paths and Atlas Search field types available to public filters."""
+
+    vector_embedding_backend: Literal["client", "automated"] = field(default="client")
+    """Vector generation backend used by MongoDB retrieval indexes."""
+
+    automated_embedding_model: str = field(default="voyage-4-large")
+    """Model requested by MongoDB Automated Embedding."""
+
+    retrieval_security_context: RetrievalSecurityContext | None = field(default=None)
+    """Mandatory retrieval constraints controlled by the hosting application."""
+
     enable_llm_cache: bool = field(default=True)
     """Enables caching for LLM responses to avoid redundant computations."""
 
@@ -481,7 +558,15 @@ class BaseRAGEngine:
         # Fix global_config now
         global_config = asdict(self)
 
-        _print_config = ",\n  ".join([f"{k} = {v}" for k, v in global_config.items()])
+        printable_config = {
+            **global_config,
+            "retrieval_security_context": (
+                "<configured>" if self.retrieval_security_context is not None else None
+            ),
+        }
+        _print_config = ",\n  ".join(
+            f"{key} = {value}" for key, value in printable_config.items()
+        )
         logger.debug(f"BaseRAGEngine init with param:\n  {_print_config}\n")
 
         # Init Embedding
@@ -589,7 +674,7 @@ class BaseRAGEngine:
             namespace=NameSpace.VECTOR_STORE_CHUNKS,
             workspace=self.workspace,
             embedding_func=self.embedding_func,
-            meta_fields={"full_doc_id", "content", "file_path"},
+            meta_fields={"full_doc_id", "content", "file_path", "metadata"},
         )
 
         # Initialize document status storage
@@ -1085,6 +1170,7 @@ class BaseRAGEngine:
         ids: str | list[str] | None = None,
         file_paths: str | list[str] | None = None,
         track_id: str | None = None,
+        metadata: Sequence[Mapping[str, Any]] | None = None,
     ) -> str:
         """Sync Insert documents with checkpoint support
 
@@ -1110,6 +1196,7 @@ class BaseRAGEngine:
                 ids,
                 file_paths,
                 track_id,
+                metadata,
             )
         )
 
@@ -1121,6 +1208,7 @@ class BaseRAGEngine:
         ids: str | list[str] | None = None,
         file_paths: str | list[str] | None = None,
         track_id: str | None = None,
+        metadata: Sequence[Mapping[str, Any]] | None = None,
     ) -> str:
         """Async Insert documents with checkpoint support
 
@@ -1141,7 +1229,15 @@ class BaseRAGEngine:
         if track_id is None:
             track_id = generate_track_id("insert")
 
-        await self.apipeline_enqueue_documents(input, ids, file_paths, track_id)
+        document_count = 1 if isinstance(input, str) else len(input)
+        normalized_metadata = normalize_metadata_batch(
+            metadata,
+            document_count,
+            getattr(self, "filterable_metadata_fields", None),
+        )
+        await self.apipeline_enqueue_documents(
+            input, ids, file_paths, track_id, normalized_metadata
+        )
         await self.apipeline_process_enqueue_documents(
             split_by_character, split_by_character_only
         )
@@ -1228,6 +1324,7 @@ class BaseRAGEngine:
         ids: list[str] | None = None,
         file_paths: str | list[str] | None = None,
         track_id: str | None = None,
+        metadata: Sequence[Mapping[str, Any]] | None = None,
     ) -> str:
         """
         Pipeline for Processing Documents
@@ -1255,6 +1352,12 @@ class BaseRAGEngine:
             ids = [ids]
         if isinstance(file_paths, str):
             file_paths = [file_paths]
+        normalized_metadata = normalize_metadata_batch(
+            metadata,
+            len(input),
+            getattr(self, "filterable_metadata_fields", None),
+        )
+        metadata_by_position = normalized_metadata or [{} for _ in input]
 
         # If file_paths is provided, ensure it matches the number of documents
         if file_paths is not None:
@@ -1280,31 +1383,50 @@ class BaseRAGEngine:
 
             # Generate contents dict and remove duplicates in one pass
             unique_contents = {}
-            for id_, doc, path in zip(ids, input, file_paths, strict=False):
+            for id_, doc, path, document_metadata in zip(
+                ids, input, file_paths, metadata_by_position, strict=True
+            ):
                 cleaned_content = sanitize_text_for_encoding(doc)
                 if cleaned_content not in unique_contents:
-                    unique_contents[cleaned_content] = (id_, path)
+                    unique_contents[cleaned_content] = (id_, path, document_metadata)
 
             # Reconstruct contents with unique content
             contents = {
-                id_: {"content": content, "file_path": file_path}
-                for content, (id_, file_path) in unique_contents.items()
+                id_: {
+                    "content": content,
+                    "file_path": file_path,
+                    "metadata": document_metadata,
+                }
+                for content, (
+                    id_,
+                    file_path,
+                    document_metadata,
+                ) in unique_contents.items()
             }
         else:
             # Clean input text and remove duplicates in one pass
             unique_content_with_paths = {}
-            for doc, path in zip(input, file_paths, strict=False):
+            for doc, path, document_metadata in zip(
+                input, file_paths, metadata_by_position, strict=True
+            ):
                 cleaned_content = sanitize_text_for_encoding(doc)
                 if cleaned_content not in unique_content_with_paths:
-                    unique_content_with_paths[cleaned_content] = path
+                    unique_content_with_paths[cleaned_content] = (
+                        path,
+                        document_metadata,
+                    )
 
             # Generate contents dict of MD5 hash IDs and documents with paths
             contents = {
                 compute_mdhash_id(content, prefix="doc-"): {
                     "content": content,
                     "file_path": path,
+                    "metadata": document_metadata,
                 }
-                for content, path in unique_content_with_paths.items()
+                for content, (
+                    path,
+                    document_metadata,
+                ) in unique_content_with_paths.items()
             }
 
         # 2. Generate document initial status (without content)
@@ -1319,6 +1441,7 @@ class BaseRAGEngine:
                     "file_path"
                 ],  # Store file path in document status
                 "track_id": track_id,  # Store track_id in document status
+                "metadata": content_data["metadata"],
             }
             for id_, content_data in contents.items()
         }
@@ -1359,6 +1482,7 @@ class BaseRAGEngine:
             doc_id: {
                 "content": contents[doc_id]["content"],
                 "file_path": contents[doc_id]["file_path"],
+                "metadata": contents[doc_id]["metadata"],
             }
             for doc_id in new_docs.keys()
         }
@@ -1797,15 +1921,12 @@ class BaseRAGEngine:
                                 )
 
                             # Build chunks dictionary
-                            chunks: dict[str, Any] = {
-                                compute_mdhash_id(dp["content"], prefix="chunk-"): {
-                                    **dp,
-                                    "full_doc_id": doc_id,
-                                    "file_path": file_path,  # Add file path to each chunk
-                                    "llm_cache_list": [],  # Initialize empty LLM cache list for each chunk
-                                }
-                                for dp in chunking_result
-                            }
+                            chunks = _build_document_chunks(
+                                chunking_result,
+                                doc_id,
+                                file_path,
+                                content_data.get("metadata", {}),
+                            )
 
                             if not chunks:
                                 logger.warning("No document chunks to process")
@@ -1836,7 +1957,8 @@ class BaseRAGEngine:
                                             "file_path": file_path,
                                             "track_id": status_doc.track_id,  # Preserve existing track_id
                                             "metadata": {
-                                                "processing_start_time": processing_start_time
+                                                **status_doc.metadata,
+                                                "processing_start_time": processing_start_time,
                                             },
                                         }
                                     }
@@ -1927,6 +2049,7 @@ class BaseRAGEngine:
                                         "file_path": file_path,
                                         "track_id": status_doc.track_id,  # Preserve existing track_id
                                         "metadata": {
+                                            **status_doc.metadata,
                                             "processing_start_time": processing_start_time,
                                             "processing_end_time": processing_end_time,
                                         },
@@ -1982,6 +2105,7 @@ class BaseRAGEngine:
                                             "file_path": file_path,
                                             "track_id": status_doc.track_id,  # Preserve existing track_id
                                             "metadata": {
+                                                **status_doc.metadata,
                                                 "processing_start_time": processing_start_time,
                                                 "processing_end_time": processing_end_time,
                                             },
@@ -2050,6 +2174,7 @@ class BaseRAGEngine:
                                             "file_path": file_path,
                                             "track_id": status_doc.track_id,  # Preserve existing track_id
                                             "metadata": {
+                                                **status_doc.metadata,
                                                 "processing_start_time": processing_start_time,
                                                 "processing_end_time": processing_end_time,
                                             },
@@ -2212,9 +2337,9 @@ class BaseRAGEngine:
                     "source_id": source_id,
                     "tokens": tokens,
                     "chunk_order_index": chunk_order_index,
-                    "full_doc_id": full_doc_id
-                    if full_doc_id is not None
-                    else source_id,
+                    "full_doc_id": (
+                        full_doc_id if full_doc_id is not None else source_id
+                    ),
                     "file_path": file_path,
                     "status": DocStatus.PROCESSED,
                 }
@@ -2550,25 +2675,15 @@ class BaseRAGEngine:
         global_config = asdict(self)
 
         # Create a copy of param to avoid modifying the original
-        data_param = QueryParam(
-            mode=param.mode,
-            only_need_context=True,  # Skip LLM generation, only get context and data
-            only_need_prompt=False,
-            response_type=param.response_type,
-            stream=False,  # Data retrieval doesn't need streaming
-            top_k=param.top_k,
-            chunk_top_k=param.chunk_top_k,
-            max_entity_tokens=param.max_entity_tokens,
-            max_relation_tokens=param.max_relation_tokens,
-            max_total_tokens=param.max_total_tokens,
-            hl_keywords=param.hl_keywords,
-            ll_keywords=param.ll_keywords,
-            conversation_history=param.conversation_history,
-            history_turns=param.history_turns,
-            model_func=param.model_func,
-            user_prompt=param.user_prompt,
-            enable_rerank=param.enable_rerank,
+        param = replace(
+            param,
+            security_context=resolve_retrieval_security_context(
+                self.retrieval_security_context,
+                param.security_context,
+            ),
         )
+        _enforce_security_context_mode(param)
+        data_param = _data_query_param(param)
 
         query_result = None
 
@@ -2663,6 +2778,14 @@ class BaseRAGEngine:
         Returns:
             dict[str, Any]: Complete response with structured data and LLM response.
         """
+        param = replace(
+            param,
+            security_context=resolve_retrieval_security_context(
+                self.retrieval_security_context,
+                param.security_context,
+            ),
+        )
+        _enforce_security_context_mode(param)
         logger.debug(f"[aquery_llm] Query param: {param}")
 
         global_config = asdict(self)
@@ -2755,31 +2878,22 @@ class BaseRAGEngine:
             # Extract structured data from query result
             raw_data = query_result.raw_data or {}
             raw_data["llm_response"] = {
-                "content": query_result.content
-                if not query_result.is_streaming
-                else None,
-                "response_iterator": query_result.response_iterator
-                if query_result.is_streaming
-                else None,
+                "content": (
+                    query_result.content if not query_result.is_streaming else None
+                ),
+                "response_iterator": (
+                    query_result.response_iterator
+                    if query_result.is_streaming
+                    else None
+                ),
                 "is_streaming": query_result.is_streaming,
             }
 
             return raw_data
 
-        except Exception as e:
-            logger.error(f"Query failed: {e}")
-            # Return error response
-            return {
-                "status": "failure",
-                "message": f"Query failed: {str(e)}",
-                "data": {},
-                "metadata": {},
-                "llm_response": {
-                    "content": None,
-                    "response_iterator": None,
-                    "is_streaming": False,
-                },
-            }
+        except Exception:
+            logger.error("Query failed", exc_info=True)
+            raise
 
     def query_llm(
         self,

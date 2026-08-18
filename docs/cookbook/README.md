@@ -10,8 +10,8 @@ This cookbook showcases MongoDB's cutting-edge AI capabilities for building prod
 
 | Recipe | Description | MongoDB Features |
 |--------|-------------|-----------------|
-| [01-hybrid-search](./01-hybrid-search.md) | Native hybrid search with $rankFusion | `$rankFusion`, `$vectorSearch`, `$search` |
-| [02-lexical-prefilters](./02-lexical-prefilters.md) | MongoDB 8.2 lexical prefiltering | `$search.vectorSearch`, fuzzy, phrase, wildcard |
+| [01-hybrid-search](./01-hybrid-search.md) | Native score and rank fusion | `$scoreFusion`, `$rankFusion`, `$vectorSearch`, `$search` |
+| [02-lexical-prefilters](./02-lexical-prefilters.md) | Lexical vector prefiltering | `$search.vectorSearch`, fuzzy, phrase, wildcard |
 | [03-conversation-memory](./03-conversation-memory.md) | Multi-turn conversation with MongoDB | Document storage, session management |
 | [04-vector-search-optimization](./04-vector-search-optimization.md) | Vector search best practices | Index tuning, numCandidates, quantization |
 | [05-knowledge-graph](./05-knowledge-graph.md) | Graph-enhanced RAG | `$graphLookup`, entity relationships |
@@ -21,12 +21,13 @@ This cookbook showcases MongoDB's cutting-edge AI capabilities for building prod
 
 ## Core MongoDB AI Features
 
-### 1. Native Hybrid Search ($rankFusion)
+### 1. Native Hybrid Search
 
 MongoDB Atlas provides native hybrid search combining:
 - **Vector Search**: Semantic similarity using embeddings
 - **Full-Text Search**: Keyword matching with BM25 scoring
-- **Reciprocal Rank Fusion**: Mathematically sound result merging
+- **Score Fusion**: Normalized, explicitly weighted score combination
+- **Rank Fusion**: Reciprocal Rank Fusion as an explicit alternative
 
 ```python
 # $rankFusion combines vector and text search natively
@@ -46,9 +47,9 @@ pipeline = [
 ]
 ```
 
-### 2. Lexical Prefilters (MongoDB 8.2+)
+### 2. Lexical Prefilters
 
-NEW in MongoDB 8.2: Use Atlas Search operators as prefilters for vector search:
+Use Atlas Search operators as prefilters for vector search:
 
 ```python
 # $search.vectorSearch with lexical prefilters
@@ -198,40 +199,34 @@ Always enable `scoreDetails` in $rankFusion:
 },
 {
     "$addFields": {
-        "hybrid_score": {"$meta": "rankFusionScore"},
+        "hybrid_score": {"$meta": "score"},
         "score_details": {"$meta": "scoreDetails"}
     }
 }
 ```
 
-### 3. Graceful Fallbacks
+### 3. Fail-Closed Capability Handling
 
-Implement fallback chains for robustness:
+Keep the requested evidence boundary and fusion algorithm intact. Capability
+errors are explicit; callers decide whether to retry with a different strategy:
 
 ```python
-async def search(query, vector):
-    try:
-        # Try native $rankFusion first
-        return await hybrid_search_with_rank_fusion(...)
-    except Exception:
-        try:
-            # Fallback to manual RRF (works on M0)
-            return await manual_hybrid_search_with_rrf(...)
-        except Exception:
-            # Last resort: vector-only search
-            return await vector_only_search(...)
+from hybridrag.engine.exceptions import RetrievalCapabilityError
+
+try:
+    return await rag.query_data(query, mode="naive", fusion_strategy="score")
+except RetrievalCapabilityError:
+    # Surface the deployment capability problem. Never silently change the
+    # fusion algorithm or discard one of the evidence branches.
+    raise
 ```
 
 ## Feature Availability
 
-| Feature | MongoDB Version | Atlas Tier |
-|---------|-----------------|------------|
-| $vectorSearch | 6.0+ | All (including M0) |
-| $search | 6.0+ | All |
-| $rankFusion | 8.0+ | M10+ |
-| $scoreFusion | 8.0+ | M10+ |
-| Lexical Prefilters | 8.2+ | M10+ (Preview) |
-| $graphLookup | 3.4+ | All |
+HybridRAG does not maintain a numeric version or Atlas-tier matrix. It executes
+the requested native capability and returns a typed capability error when the
+connected deployment does not support or has not enabled it. This keeps the
+library current as MongoDB deployment capabilities evolve.
 
 ## Getting Started
 

@@ -1,5 +1,7 @@
 """Tests for lexical prefilter builder."""
 
+import pytest
+
 from hybridrag.enhancements.filters.lexical_prefilters import (
     LexicalPrefilterConfig,
     build_lexical_prefilters,
@@ -130,9 +132,47 @@ class TestBuildLexicalPrefilters:
         )
         result = build_lexical_prefilters(config)
 
-        geo = result["compound"]["filter"][0]["geoWithin"]
+        geo = result["compound"]["filter"][0]["geoShape"]
         assert geo["path"] == "location"
+        assert geo["relation"] == "within"
         assert geo["geometry"]["type"] == "Polygon"
+
+    @pytest.mark.parametrize(
+        "relation",
+        ["contains", "disjoint", "intersects", "within"],
+    )
+    def test_geo_filter_preserves_relation(self, relation):
+        geometry = {"type": "Point", "coordinates": [-73.97, 40.77]}
+        config = LexicalPrefilterConfig(
+            geo_filters=[
+                {
+                    "path": "location",
+                    "relation": relation,
+                    "geometry": geometry,
+                }
+            ]
+        )
+
+        clause = build_lexical_prefilters(config)["compound"]["filter"][0]
+        assert clause == {
+            "geoShape": {
+                "path": "location",
+                "relation": relation,
+                "geometry": geometry,
+            }
+        }
+
+    def test_incomplete_filter_is_rejected_instead_of_removed(self):
+        config = LexicalPrefilterConfig(text_filters=[{"path": "content"}])
+
+        with pytest.raises(ValueError, match="text filter requires"):
+            build_lexical_prefilters(config)
+
+    def test_range_without_a_bound_is_rejected(self):
+        config = LexicalPrefilterConfig(range_filters={"year": {}})
+
+        with pytest.raises(ValueError, match="at least one bound"):
+            build_lexical_prefilters(config)
 
     def test_query_string_filter(self):
         """QueryString filter supports Lucene syntax."""

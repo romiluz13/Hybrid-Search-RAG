@@ -188,7 +188,7 @@ notebooks: ## Start Jupyter Lab with examples
 
 test: ## Run all tests (excludes MongoDB-backed integration tests)
 	@echo "$(BLUE)Running tests...$(NC)"
-	@$(PYTEST) tests/ -v -m "not integration" --ignore=tests/test_lightrag.py
+	@$(PYTEST) tests/ -v -m "not integration and not benchmark" --ignore=tests/test_lightrag.py
 
 test-cov: ## Run tests with coverage report (excludes integration tests)
 	@echo "$(BLUE)Running tests with coverage...$(NC)"
@@ -210,7 +210,7 @@ contract-tests: ## Run canonical API and integration contract tests
 
 release-gate-fast: ## Run the fast publish gate for the blessed stack
 	@$(VENV)/bin/python -m compileall src/hybridrag tests
-	@$(VENV)/bin/ruff check src/hybridrag tests
+	@$(VENV)/bin/ruff check --no-cache src/hybridrag tests
 	@$(PYTEST) tests/api/test_query_api_features.py tests/core/ tests/examples/ tests/integration/test_full_rag_pipeline.py -v
 
 release-gate-live: ## Run the deterministic seeded live gate with real providers
@@ -228,7 +228,7 @@ benchmark-save: ## Run and save benchmark baseline
 
 lint: ## Run linting checks
 	@echo "$(BLUE)Running linters...$(NC)"
-	@$(VENV)/bin/ruff check src/hybridrag tests
+	@$(VENV)/bin/ruff check --no-cache src/hybridrag tests
 	@echo "$(GREEN)Linting passed!$(NC)"
 
 format: ## Format code with black and isort

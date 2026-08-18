@@ -3,27 +3,55 @@ This module contains all query-related routes for the HybridRAG API.
 """
 
 import json
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from .api.utils_api import get_combined_auth_dependency
-from .base import QueryParam
-from .utils import logger
+from hybridrag.api.models import RetrievalRequestOptions
+from hybridrag.engine.exceptions import (
+    RetrievalCapabilityError,
+    RetrievalError,
+    RetrievalValidationError,
+)
+
+from ...base import QueryParam
+from ...utils import logger
+from ..utils_api import get_combined_auth_dependency
 
 router = APIRouter(tags=["query"])
 
 
-class QueryRequest(BaseModel):
+def _query_http_exception(error: RetrievalError) -> HTTPException:
+    if isinstance(error, RetrievalValidationError):
+        return HTTPException(
+            status_code=400,
+            detail={
+                "code": "retrieval_validation_error",
+                "message": str(error),
+            },
+        )
+    if isinstance(error, RetrievalCapabilityError):
+        return HTTPException(
+            status_code=422,
+            detail={
+                "code": "retrieval_capability_error",
+                "message": str(error),
+            },
+        )
+    return HTTPException(
+        status_code=502,
+        detail={
+            "code": "retrieval_execution_error",
+            "message": "Retrieval backend failed",
+        },
+    )
+
+
+class QueryRequest(RetrievalRequestOptions):
     query: str = Field(
         min_length=3,
         description="The query text",
-    )
-
-    mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"] = Field(
-        default="mix",
-        description="Query mode",
     )
 
     only_need_context: bool | None = Field(
@@ -136,8 +164,11 @@ class QueryRequest(BaseModel):
         # Use Pydantic's `.model_dump(exclude_none=True)` to remove None values automatically
         # Exclude API-level parameters that don't belong in QueryParam
         request_data = self.model_dump(
-            exclude_none=True, exclude={"query", "include_chunk_content"}
+            exclude_none=True,
+            exclude={"query", "include_chunk_content", "filter_config"},
         )
+        if self.filter_config is not None:
+            request_data["filter_config"] = self.filter_config
 
         # Ensure `mode` and `stream` are set explicitly
         param = QueryParam(**request_data)
@@ -451,9 +482,15 @@ def create_query_routes(rag, api_key: str | None = None, top_k: int = 60):
                 return QueryResponse(response=response_content, references=references)
             else:
                 return QueryResponse(response=response_content, references=None)
+        except RetrievalError as e:
+            raise _query_http_exception(e) from None
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
         except Exception as e:
             logger.error(f"Error processing query: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(
+                status_code=500, detail="Internal server error"
+            ) from None
 
     @router.post(
         "/query/stream",
@@ -711,9 +748,9 @@ def create_query_routes(rag, api_key: str | None = None, top_k: int = 60):
                             async for chunk in response_stream:
                                 if chunk:  # Only send non-empty content
                                     yield f"{json.dumps({'response': chunk})}\n"
-                        except Exception as e:
-                            logger.error(f"Streaming error: {str(e)}")
-                            yield f"{json.dumps({'error': str(e)})}\n"
+                        except Exception:
+                            logger.error("Streaming response failed", exc_info=True)
+                            yield f"{json.dumps({'error': 'Stream interrupted'})}\n"
                 else:
                     # Non-streaming mode: send complete response in one message
                     response_content = llm_response.get("content", "")
@@ -737,9 +774,15 @@ def create_query_routes(rag, api_key: str | None = None, top_k: int = 60):
                     "X-Accel-Buffering": "no",  # Ensure proper handling of streaming response when proxied by Nginx
                 },
             )
+        except RetrievalError as e:
+            raise _query_http_exception(e) from None
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
         except Exception as e:
             logger.error(f"Error processing streaming query: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(
+                status_code=500, detail="Internal server error"
+            ) from None
 
     @router.post(
         "/query/data",
@@ -1153,9 +1196,16 @@ def create_query_routes(rag, api_key: str | None = None, top_k: int = 60):
                     status="failure",
                     message="Invalid response type",
                     data={},
+                    metadata={},
                 )
+        except RetrievalError as e:
+            raise _query_http_exception(e) from None
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
         except Exception as e:
             logger.error(f"Error processing data query: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise HTTPException(
+                status_code=500, detail="Internal server error"
+            ) from None
 
     return router

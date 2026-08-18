@@ -36,6 +36,7 @@ from .constants import (
     SOURCE_IDS_LIMIT_METHOD_FIFO,
     VALID_SOURCE_IDS_LIMIT_METHODS,
 )
+from .exceptions import RetrievalCapabilityError, RetrievalExecutionError
 
 # Precompile regex pattern for JSON sanitization (module-level, compiled once)
 _SURROGATE_PATTERN = re.compile(r"[\uD800-\uDFFF\uFFFE\uFFFF]")
@@ -1416,9 +1417,9 @@ async def save_to_cache(hashing_kv, cache_data: CacheData):
         "cache_type": cache_data.cache_type,
         "chunk_id": cache_data.chunk_id if cache_data.chunk_id is not None else None,
         "original_prompt": cache_data.prompt,
-        "queryparam": cache_data.queryparam
-        if cache_data.queryparam is not None
-        else None,
+        "queryparam": (
+            cache_data.queryparam if cache_data.queryparam is not None else None
+        ),
     }
 
     logger.info(f" == LLM cache == saving: {flattened_key}")
@@ -2603,10 +2604,9 @@ async def apply_rerank_if_enabled(
 
     rerank_func = global_config.get("rerank_model_func")
     if not rerank_func:
-        logger.warning(
-            "Rerank is enabled but no rerank model is configured. Please set up a rerank model or set enable_rerank=False in query parameters."
+        raise RetrievalCapabilityError(
+            "External reranking is enabled but its provider is not configured"
         )
-        return retrieved_docs
 
     try:
         # Extract document content for reranking
@@ -2650,18 +2650,23 @@ async def apply_rerank_if_enabled(
                 logger.info(
                     f"Successfully reranked: {len(reranked_docs)} chunks from {len(retrieved_docs)} original chunks"
                 )
+                if not reranked_docs:
+                    raise RetrievalExecutionError(
+                        "External reranking returned no valid document indexes"
+                    )
                 return reranked_docs
             else:
                 # Legacy format: assume it's already reranked documents
                 logger.info(f"Using legacy rerank format: {len(rerank_results)} chunks")
                 return rerank_results[:top_n] if top_n else rerank_results
         else:
-            logger.warning("Rerank returned empty results, using original chunks")
-            return retrieved_docs
+            raise RetrievalExecutionError("External reranking returned no results")
 
-    except Exception as e:
-        logger.error(f"Error during reranking: {e}, using original chunks")
-        return retrieved_docs
+    except (RetrievalCapabilityError, RetrievalExecutionError):
+        raise
+    except Exception as error:
+        logger.error("External reranking failed", exc_info=True)
+        raise RetrievalExecutionError("External reranking failed") from error
 
 
 async def process_chunks_unified(
@@ -2694,7 +2699,12 @@ async def process_chunks_unified(
     origin_count = len(unique_chunks)
 
     # 1. Apply reranking if enabled and query is provided
-    if query_param.enable_rerank and query and unique_chunks:
+    if (
+        query_param.enable_rerank
+        and query_param.rerank_strategy == "external"
+        and query
+        and unique_chunks
+    ):
         rerank_top_k = query_param.chunk_top_k or len(unique_chunks)
         unique_chunks = await apply_rerank_if_enabled(
             query=query,

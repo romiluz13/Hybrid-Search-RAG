@@ -493,22 +493,13 @@ atlas_config = AtlasSearchFilterConfig(
 }
 ```
 
-### 3. Using Lexical Prefilters on Old MongoDB
+### 3. Handling Lexical-Prefilter Capability Errors
 
 ```python
-# WRONG: Lexical prefilters on MongoDB < 8.2
-{
-    "$search": {
-        "vectorSearch": {...}  # Not available before 8.2
-    }
-}
-
-# CORRECT: Use $vectorSearch with MQL filters
-{
-    "$vectorSearch": {
-        "filter": {"category": {"$eq": "docs"}}  # Works on all versions
-    }
-}
+# Execute the requested capability. HybridRAG raises a typed capability error
+# if the deployment does not support it; it never silently substitutes a
+# different filter language or evidence boundary.
+await vector_search_with_lexical_prefilters(...)
 ```
 
 ## Summary

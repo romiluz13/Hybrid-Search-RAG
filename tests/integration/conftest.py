@@ -60,6 +60,7 @@ async def rag(require_mongodb_uri, tmp_path):
         "mongodb_uri": SecretStr(_resolve_test_mongodb_uri()),
         "mongodb_database": test_db,
         "mongodb_workspace": "test",
+        "enable_rerank": False,
         **_openai_llm_overrides(base_settings),
     }
     settings = base_settings.model_copy(update=overrides)
@@ -80,6 +81,18 @@ async def rag(require_mongodb_uri, tmp_path):
     rag_instance = await create_hybridrag(
         settings=settings,
         working_dir=str(tmp_path / "hybridrag_workspace"),
+    )
+    applied_indexes = await rag_instance.apply_search_index_plans()
+    assert {
+        plan["index_name"] for plan in applied_indexes if plan["index_kind"] == "vector"
+    } == {
+        "vector_knn_index_test_chunks",
+        "vector_knn_index_test_entities",
+        "vector_knn_index_test_relationships",
+    }
+    await rag_instance.wait_for_search_indexes(
+        [plan["index_name"] for plan in applied_indexes],
+        timeout_seconds=180,
     )
     yield rag_instance
 

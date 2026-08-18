@@ -49,6 +49,19 @@ class TestBuildVectorSearchFilters:
 
         assert result["category"]["$in"] == ["tech", "science"]
 
+    def test_equality_and_membership_on_same_field_remain_conjunctive(self):
+        config = VectorSearchFilterConfig(
+            equality_filters={"tenant": "tenant-a"},
+            in_filters={"tenant": ["tenant-b"]},
+        )
+
+        result = build_vector_search_filters(config)
+
+        assert result["tenant"] == {
+            "$eq": "tenant-a",
+            "$in": ["tenant-b"],
+        }
+
     def test_combined_filters(self):
         """Multiple filter types combine correctly."""
         start = datetime(2024, 1, 1)

@@ -4,10 +4,10 @@ HybridRAG Enhancements.
 Advanced RAG capabilities:
 - Entity Boosting: Structural relevance signal from KG entities
 - Implicit Expansion: Find semantically related entities without explicit graph edges
-- MongoDB Hybrid Search: Native $rankFusion and manual RRF with fuzzy text matching
+- MongoDB Hybrid Search: Native score/rank fusion with fail-closed execution
 - Graph Search: Knowledge graph traversal via $graphLookup
 - Mix Mode Search: Combines hybrid search + graph traversal + entity boosting
-- Filter Builders: MongoDB 8.2 vector search and Atlas Search prefiltering
+- Filter Builders: Vector Search and Atlas Search prefiltering
 - Query Optimizer: Automatic parameter optimization based on query analysis
 """
 

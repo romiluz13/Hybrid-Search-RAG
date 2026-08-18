@@ -1,10 +1,10 @@
-# Recipe 02: Lexical Prefilters for Vector Search (MongoDB 8.2+)
+# Recipe 02: Lexical Prefilters for Vector Search
 
 Unlock advanced text and geospatial filtering with MongoDB's newest vector search capability.
 
 ## Overview
 
-**NEW in MongoDB 8.2 (November 2025)**: Lexical Prefilters enable Atlas Search operators as prefilters for vector search. This is a game-changer for RAG applications that need:
+Lexical Prefilters enable Atlas Search operators as prefilters for vector search. They support applications that need:
 
 - Fuzzy text matching before vector search
 - Phrase and wildcard filtering
@@ -23,7 +23,7 @@ MongoDB now provides **three distinct filtering approaches**:
 
 ## Why Lexical Prefilters Matter
 
-### Before MongoDB 8.2
+### Standard vector metadata filters
 
 ```python
 # Standard $vectorSearch only supports basic MQL operators
@@ -37,7 +37,7 @@ MongoDB now provides **three distinct filtering approaches**:
 }
 ```
 
-### After MongoDB 8.2
+### Lexical vector prefilters
 
 ```python
 # $search.vectorSearch supports full Atlas Search operators
@@ -506,23 +506,9 @@ config = LexicalPrefilterConfig(
 )
 ```
 
-## Fallback Strategy
+## Failure behavior
 
-```python
-async def search_with_fallback(collection, query_vector, filter_config):
-    """Graceful fallback for clusters without lexical prefilter support."""
-    try:
-        # Try MongoDB 8.2+ $search.vectorSearch
-        return await vector_search_with_lexical_prefilters(
-            collection, query_vector, filter_config=filter_config
-        )
-    except Exception as e:
-        if "vectorSearch" in str(e).lower():
-            logger.warning("Lexical prefilters not supported, using $vectorSearch")
-            # Fall back to standard $vectorSearch with MQL filters
-            return await vector_only_search(collection, query_vector)
-        raise
-```
+The low-level builder raises when a filter cannot be compiled or executed. It does not retry without lexical predicates or replace the requested operation with ordinary vector search.
 
 ## References
 

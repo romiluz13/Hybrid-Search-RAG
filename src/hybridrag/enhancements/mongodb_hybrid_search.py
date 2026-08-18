@@ -27,6 +27,13 @@ from typing import TYPE_CHECKING, Any
 import pymongo.errors
 from pydantic import BaseModel, Field
 
+from hybridrag.engine.exceptions import (
+    RetrievalCapabilityError,
+    RetrievalExecutionError,
+    RetrievalValidationError,
+    is_retrieval_capability_error,
+)
+
 if TYPE_CHECKING:
     from pymongo.asynchronous.collection import AsyncCollection
     from pymongo.asynchronous.database import AsyncDatabase
@@ -67,7 +74,7 @@ def calculate_num_candidates(
     Returns:
         numCandidates value for vector search
     """
-    return top_k * multiplier
+    return min(top_k * multiplier, 10_000)
 
 
 def extract_pipeline_score(
@@ -163,7 +170,7 @@ class MongoDBHybridSearchConfig:
     # Hybrid search settings
     vector_weight: float = 0.6  # Weight for vector search in score fusion
     text_weight: float = 0.4  # Weight for text search in score fusion
-    use_rank_fusion: bool = True  # Use $rankFusion (RRF) instead of $scoreFusion
+    use_rank_fusion: bool = False  # Use $rankFusion (RRF) instead of $scoreFusion
 
     # Document lookup settings
     documents_collection: str = "documents"  # Collection for document metadata
@@ -179,6 +186,14 @@ class MongoDBHybridSearchConfig:
     lexical_prefilter_index: str = (
         "default"  # Atlas Search index name for lexical prefilters
     )
+
+    def __post_init__(self) -> None:
+        if self.vector_num_candidates is not None and not (
+            1 <= self.vector_num_candidates <= 10_000
+        ):
+            raise RetrievalValidationError(
+                "vector_num_candidates must produce numCandidates between 1 and 10000"
+            )
 
     def get_search_paths(self) -> list[str]:
         """Get list of search paths."""
@@ -287,6 +302,19 @@ async def hybrid_search_with_rank_fusion(
     """
     if config is None:
         config = MongoDBHybridSearchConfig()
+
+    if any(
+        filter_config is not None
+        for filter_config in (
+            vector_filter_config,
+            atlas_filter_config,
+            lexical_filter_config,
+        )
+    ):
+        raise RetrievalValidationError(
+            "legacy fusion cannot prove independent filter models equivalent; "
+            "use HybridRAG with the unified FilterConfig"
+        )
 
     logger.info(
         f"[HYBRID_SEARCH] Starting $rankFusion search: "
@@ -467,21 +495,11 @@ async def hybrid_search_with_rank_fusion(
         return formatted_results
 
     except pymongo.errors.OperationFailure as e:
-        logger.warning(f"[HYBRID_SEARCH] $rankFusion not supported: {e}")
-        # Fall back to manual RRF (works on M0/M2 tiers)
-        logger.info("[HYBRID_SEARCH] Falling back to manual RRF search")
-        try:
-            return await manual_hybrid_search_with_rrf(
-                collection, query_text, query_vector, top_k, config
-            )
-        except Exception as rrf_err:
-            # Last resort: vector-only search
-            logger.error(f"[HYBRID_SEARCH] Manual RRF also failed: {rrf_err}")
-            logger.warning("[HYBRID_SEARCH] Last resort: vector-only search")
-            return await vector_only_search(collection, query_vector, top_k, config)
-    except Exception as e:
-        logger.error(f"[HYBRID_SEARCH] Unexpected error: {e}", exc_info=True)
-        raise  # Don't silently fall back on programming errors
+        if is_retrieval_capability_error(e):
+            raise RetrievalCapabilityError("rank fusion is unavailable") from e
+        raise RetrievalExecutionError("rank fusion failed") from e
+    except pymongo.errors.PyMongoError as e:
+        raise RetrievalExecutionError("rank fusion failed") from e
 
 
 async def hybrid_search_with_score_fusion(
@@ -559,11 +577,23 @@ async def hybrid_search_with_score_fusion(
                     "normalization": "sigmoid",
                 },
                 "combination": {
-                    # Weighted combination
-                    "weights": {
-                        "vector": config.vector_weight,
-                        "text": config.text_weight,
-                    }
+                    "method": "expression",
+                    "expression": {
+                        "$sum": [
+                            {
+                                "$multiply": [
+                                    "$$vector",
+                                    config.vector_weight,
+                                ]
+                            },
+                            {
+                                "$multiply": [
+                                    "$$text",
+                                    config.text_weight,
+                                ]
+                            },
+                        ]
+                    },
                 },
                 "scoreDetails": True,
             }
@@ -594,19 +624,12 @@ async def hybrid_search_with_score_fusion(
 
         return formatted_results
 
-    except Exception as e:
-        logger.error(f"[HYBRID_SEARCH] $scoreFusion failed: {e}")
-        # Fall back to manual RRF (works on M0/M2 tiers)
-        logger.warning("[HYBRID_SEARCH] Falling back to manual RRF search")
-        try:
-            return await manual_hybrid_search_with_rrf(
-                collection, query_text, query_vector, top_k, config
-            )
-        except Exception as rrf_err:
-            # Last resort: vector-only search
-            logger.error(f"[HYBRID_SEARCH] Manual RRF also failed: {rrf_err}")
-            logger.warning("[HYBRID_SEARCH] Last resort: vector-only search")
-            return await vector_only_search(collection, query_vector, top_k, config)
+    except pymongo.errors.OperationFailure as e:
+        if is_retrieval_capability_error(e):
+            raise RetrievalCapabilityError("score fusion is unavailable") from e
+        raise RetrievalExecutionError("score fusion failed") from e
+    except pymongo.errors.PyMongoError as e:
+        raise RetrievalExecutionError("score fusion failed") from e
 
 
 def build_weighted_text_search_clause(
@@ -781,12 +804,8 @@ async def multi_field_text_search(
 
         return search_results
 
-    except Exception as e:
-        logger.error(f"[MULTI_FIELD_SEARCH] Failed: {e}")
-        # Fallback to simple text search
-        return await text_only_search(
-            collection, query_text, top_k, config, db, filter_config
-        )
+    except pymongo.errors.PyMongoError as e:
+        raise RetrievalExecutionError("text search failed") from e
 
 
 async def text_only_search(
@@ -930,63 +949,8 @@ async def text_only_search(
 
         return search_results
 
-    except Exception as e:
-        logger.warning(f"[TEXT_SEARCH] Compound text search failed: {e}")
-        # Fallback to simple text search without compound
-        return await _fallback_simple_text_search(
-            collection, query_text, top_k, config, db
-        )
-
-
-async def _fallback_simple_text_search(
-    collection: AsyncCollection,
-    query_text: str,
-    top_k: int,
-    config: MongoDBHybridSearchConfig,
-    db: AsyncDatabase | None,
-) -> list[SearchResult]:
-    """Fallback to simple text search when compound query fails."""
-    pipeline: list[dict[str, Any]] = [
-        {
-            "$search": {
-                "index": config.text_index_name,
-                "text": {
-                    "query": query_text,
-                    "path": config.text_search_path,
-                },
-            }
-        },
-        {"$limit": top_k},
-        {
-            "$project": {
-                "chunk_id": "$_id",
-                "content": 1,
-                "similarity": {"$meta": "searchScore"},
-                "metadata": 1,
-            }
-        },
-    ]
-
-    try:
-        cursor = await collection.aggregate(
-            pipeline, allowDiskUse=True, maxTimeMS=_HYBRID_AGGREGATE_TIMEOUT_MS
-        )
-        results = await cursor.to_list(length=None)
-
-        return [
-            SearchResult(
-                chunk_id=str(doc.get("chunk_id", "")),
-                document_id="",
-                content=doc.get("content", ""),
-                similarity=doc.get("similarity", 0.0),
-                metadata=doc.get("metadata", {}),
-                search_type="text_simple_fallback",
-            )
-            for doc in results
-        ]
-    except Exception as e:
-        logger.error(f"[TEXT_SEARCH] Fallback also failed: {e}")
-        return []
+    except pymongo.errors.PyMongoError as e:
+        raise RetrievalExecutionError("text search failed") from e
 
 
 def reciprocal_rank_fusion(
@@ -1072,15 +1036,10 @@ async def manual_hybrid_search_with_rrf(
     db: AsyncDatabase | None = None,
 ) -> list[SearchResult]:
     """
-    Manual RRF implementation for M0/M2 tiers.
-
-    This function is used when MongoDB's native $rankFusion is not available
-    (e.g., on free tier M0 or shared M2 clusters).
+    Explicit manual RRF implementation.
 
     It runs semantic (vector) search and text search concurrently, then merges
     results using Reciprocal Rank Fusion (RRF).
-
-    Works on all Atlas tiers including M0 (free tier) - no M10+ required!
 
     Args:
         collection: MongoDB collection with both vector and text indexes
@@ -1114,17 +1073,7 @@ async def manual_hybrid_search_with_rrf(
     vector_results, text_results = await asyncio.gather(
         vector_only_search(collection, query_vector, fetch_count, config, db),
         text_only_search(collection, query_text, fetch_count, config, db),
-        return_exceptions=True,
     )
-
-    # Handle errors gracefully
-    if isinstance(vector_results, Exception):
-        logger.warning(f"[MANUAL_HYBRID] Vector search failed: {vector_results}")
-        vector_results = []
-
-    if isinstance(text_results, Exception):
-        logger.warning(f"[MANUAL_HYBRID] Text search failed: {text_results}")
-        text_results = []
 
     # If both failed, return empty list
     if not vector_results and not text_results:
@@ -1173,7 +1122,7 @@ async def vector_only_search(
     """
     Perform semantic vector search using MongoDB Atlas Vector Search.
 
-    Supports MongoDB 8.0+ prefiltering with standard MongoDB operators.
+    Supports prefiltering with standard MongoDB operators.
 
     Args:
         collection: MongoDB collection with vector search index
@@ -1205,7 +1154,7 @@ async def vector_only_search(
         "limit": top_k,
     }
 
-    # Add prefilters if provided (MongoDB 8.0+ feature)
+    # Add prefilters if provided.
     if filter_config:
         from hybridrag.enhancements.filters import build_vector_search_filters
 
@@ -1287,9 +1236,8 @@ async def vector_only_search(
 
         return search_results
 
-    except Exception as e:
-        logger.error(f"[VECTOR_SEARCH] Failed: {e}")
-        return []
+    except pymongo.errors.PyMongoError as e:
+        raise RetrievalExecutionError("vector search failed") from e
 
 
 async def vector_search_with_lexical_prefilters(
@@ -1301,10 +1249,10 @@ async def vector_search_with_lexical_prefilters(
     lexical_filter_config: LexicalPrefilterConfig | None = None,
 ) -> list[SearchResult]:
     """
-    Perform vector search using MongoDB 8.2+ $search.vectorSearch with lexical prefilters.
+    Perform vector search using $search.vectorSearch with lexical prefilters.
 
-    NEW in MongoDB 8.2: Uses $search.vectorSearch instead of $vectorSearch.
-    This enables Atlas Search operators (text, fuzzy, phrase, wildcard, geo)
+    This uses $search.vectorSearch instead of $vectorSearch, enabling Atlas
+    Search operators (text, fuzzy, phrase, wildcard, geo)
     as prefilters, narrowing the candidate set BEFORE vector similarity.
 
     Benefits over $vectorSearch:
@@ -1437,19 +1385,8 @@ async def vector_search_with_lexical_prefilters(
 
         return search_results
 
-    except Exception as e:
-        # Check if error is due to unsupported $search.vectorSearch
-        error_str = str(e).lower()
-        if "vectorsearch" in error_str or "unknown" in error_str:
-            logger.warning(
-                f"[VECTOR_LEXICAL] $search.vectorSearch not supported, "
-                f"falling back to $vectorSearch: {e}"
-            )
-            # Fall back to traditional $vectorSearch
-            return await vector_only_search(collection, query_vector, top_k, config, db)
-
-        logger.error(f"[VECTOR_LEXICAL] Search failed: {e}")
-        return []
+    except pymongo.errors.PyMongoError as e:
+        raise RetrievalExecutionError("vector search failed") from e
 
 
 class MongoDBHybridSearcher:
@@ -1514,7 +1451,7 @@ class MongoDBHybridSearcher:
         query_text: str,
         query_vector: list[float],
         top_k: int = 10,
-        use_rank_fusion: bool = True,
+        use_rank_fusion: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Perform hybrid search on a collection.

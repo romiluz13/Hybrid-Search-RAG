@@ -2,7 +2,8 @@
 
 ## Status
 
-Deferred - Considered but not adopted at this time.
+Superseded by ADR-0008. The constraints below remain design inputs for the
+separate chunk and knowledge-graph embedding paths.
 
 ## Context
 

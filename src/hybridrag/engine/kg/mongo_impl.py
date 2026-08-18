@@ -3,9 +3,11 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, final
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, final
 
 import numpy as np
+
+from hybridrag.enhancements.filters import FilterConfig, RetrievalSecurityContext
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -29,6 +31,12 @@ from ..base import (
     DocStatusStorage,
 )
 from ..constants import GRAPH_FIELD_SEP
+from ..exceptions import (
+    RetrievalCapabilityError,
+    RetrievalExecutionError,
+    SearchIndexLifecycleError,
+    is_retrieval_capability_error,
+)
 from ..kg.shared_storage import get_data_init_lock
 from ..types import KnowledgeGraph, KnowledgeGraphEdge, KnowledgeGraphNode
 from ..utils import compute_mdhash_id, logger
@@ -83,8 +91,72 @@ GRAPH_BFS_MODE = os.getenv("MONGO_GRAPH_BFS_MODE", "bidirectional")
 # Per query-optimizer skill: to_list(length=_DEFAULT_CURSOR_LIMIT) is dangerous -- always use explicit limits
 _DEFAULT_CURSOR_LIMIT = 10000
 
+
+class SearchIndexStatus(TypedDict):
+    name: str
+    type: str
+    status: str
+    queryable: bool
+    failure: Any | None
+    exists: bool
+    fresh: bool
+    transitioning: bool
+    healthy: bool
+    status_detail: Any | None
+    main_index: dict[str, Any] | None
+    staged_index: dict[str, Any] | None
+    backend_metadata: dict[str, Any]
+
+
+def _redact_query_vectors(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: (
+                "<redacted>"
+                if key in {"queryVector", "queryVectorBson"}
+                else _redact_query_vectors(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_query_vectors(item) for item in value]
+    return value
+
+
+def search_index_definition_satisfies(actual: Any, desired: Any) -> bool:
+    """Compare server-normalized definitions while tolerating added defaults."""
+    if isinstance(desired, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and search_index_definition_satisfies(actual[key], expected)
+            for key, expected in desired.items()
+        )
+    if isinstance(desired, list):
+        return isinstance(actual, list) and all(
+            any(
+                search_index_definition_satisfies(candidate, expected)
+                for candidate in actual
+            )
+            for expected in desired
+        )
+    return actual == desired
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _unix_timestamp() -> int:
+    try:
+        return int(time.time())
+    except (OSError, OverflowError, ValueError):
+        return 0
+
+
 # [Rule: ops-transaction-runtime-limit] Aggregation timeout in ms
-MONGO_AGGREGATE_TIMEOUT_MS = int(os.getenv("MONGO_AGGREGATE_TIMEOUT_MS", "30000"))
+MONGO_AGGREGATE_TIMEOUT_MS = _env_int("MONGO_AGGREGATE_TIMEOUT_MS", 30000)
 
 
 class ClientManager:
@@ -252,7 +324,7 @@ class MongoKVStorage(BaseKVStorage):
         # Use bulk_write for better performance
 
         operations = []
-        current_time = int(time.time())  # Get current Unix timestamp
+        current_time = _unix_timestamp()
 
         for k, v in data.items():
             # For text_chunks namespace, ensure llm_cache_list field exists
@@ -832,9 +904,6 @@ class MongoGraphStorage(BaseGraphStorage):
             self.edge_collection = await get_or_create_collection(
                 self.db, self._edge_collection_name
             )
-
-            # Create Atlas Search index for better search performance if possible
-            await self.create_search_index_if_not_exists()
 
             # Create indexes on edge collection for $graphLookup and query performance
             # These indexes are CRITICAL for graph traversal operations
@@ -1582,7 +1651,11 @@ class MongoGraphStorage(BaseGraphStorage):
 
         except PyMongoError as e:
             # Handle memory limit errors specifically
-            if "memory limit" in str(e).lower() or "sort exceeded" in str(e).lower():
+            error_text = str(e).lower()
+            is_memory_error = any(
+                marker in error_text for marker in ("memory limit", "sort exceeded")
+            )
+            if is_memory_error:
                 logger.warning(
                     f"[{self.workspace}] MongoDB memory limit exceeded, falling back to simple query: {str(e)}"
                 )
@@ -2053,27 +2126,7 @@ class MongoGraphStorage(BaseGraphStorage):
     async def _create_improved_search_index(self, index_name: str):
         """Create an improved search index with multiple field types."""
         search_index_model = SearchIndexModel(
-            definition={
-                "mappings": {
-                    "dynamic": False,
-                    "fields": {
-                        "_id": [
-                            {
-                                "type": "string",
-                            },
-                            {
-                                "type": "token",
-                            },
-                            {
-                                "type": "autocomplete",
-                                "maxGrams": 15,
-                                "minGrams": 2,
-                            },
-                        ]
-                    },
-                },
-                "analyzer": "lucene.standard",  # Index-level analyzer for text processing
-            },
+            definition=self.build_search_index_definition(),
             name=index_name,
             type="search",
         )
@@ -2085,6 +2138,26 @@ class MongoGraphStorage(BaseGraphStorage):
         logger.info(
             f"[{self.workspace}] Index will be built asynchronously, using regex fallback until ready."
         )
+
+    def build_search_index_definition(self) -> dict[str, Any]:
+        """Build the desired graph entity-label Search index definition."""
+        return {
+            "mappings": {
+                "dynamic": False,
+                "fields": {
+                    "_id": [
+                        {"type": "string"},
+                        {"type": "token"},
+                        {
+                            "type": "autocomplete",
+                            "maxGrams": 15,
+                            "minGrams": 2,
+                        },
+                    ]
+                },
+            },
+            "analyzer": "lucene.standard",
+        }
 
     async def _create_edge_indexes_if_not_exists(self):
         """Create indexes on edge collection for optimal $graphLookup and query performance.
@@ -2191,6 +2264,133 @@ class MongoGraphStorage(BaseGraphStorage):
                 f"[{self.workspace}] Unexpected error creating Atlas Search index for {self._collection_name}: {e}"
             )
 
+    async def list_search_index_statuses(self) -> list[SearchIndexStatus]:
+        """Return the entity-search index lifecycle without flattening server state."""
+        index_name = "entity_id_search_idx"
+        cursor = await self.collection.list_search_indexes()
+        indexes = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
+        index = next(
+            (item for item in indexes if item.get("name") == index_name),
+            {},
+        )
+        status = str(index.get("status", "does_not_exist")).lower()
+        queryable = bool(index.get("queryable", False))
+        exists = bool(index)
+        observed_definition = index.get("latestDefinition") or index.get("definition")
+        fresh = status == "ready" and search_index_definition_satisfies(
+            observed_definition,
+            self.build_search_index_definition(),
+        )
+        return [
+            {
+                "name": index_name,
+                "type": index.get("type", "search"),
+                "status": status,
+                "queryable": queryable,
+                "failure": (
+                    index.get("statusDetail") or index.get("error") or None
+                    if status == "failed"
+                    else None
+                ),
+                "exists": exists,
+                "fresh": fresh,
+                "transitioning": status in {"pending", "building", "deleting"},
+                "healthy": fresh and queryable,
+                "status_detail": index.get("statusDetail"),
+                "main_index": index.get("mainIndex"),
+                "staged_index": index.get("stagedIndex"),
+                "backend_metadata": dict(index),
+            }
+        ]
+
+    async def plan_search_index(self) -> dict[str, Any]:
+        """Plan the graph label Search index without mutating MongoDB."""
+        index_name = "entity_id_search_idx"
+        desired = self.build_search_index_definition()
+        cursor = await self.collection.list_search_indexes()
+        indexes = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
+        current_index = next(
+            (index for index in indexes if index.get("name") == index_name),
+            None,
+        )
+        if current_index is None:
+            return {
+                "action": "create",
+                "index_name": index_name,
+                "current": None,
+                "desired": desired,
+            }
+        current = current_index.get("latestDefinition") or current_index.get(
+            "definition"
+        )
+        return {
+            "action": (
+                "noop"
+                if search_index_definition_satisfies(current, desired)
+                else "rebuild"
+            ),
+            "index_name": index_name,
+            "current": current,
+            "desired": desired,
+        }
+
+    async def apply_search_index_plan(self) -> dict[str, Any]:
+        """Explicitly apply the graph label Search index plan."""
+        plan = await self.plan_search_index()
+        if plan["action"] == "create":
+            model = SearchIndexModel(
+                definition=plan["desired"],
+                name=plan["index_name"],
+                type="search",
+            )
+            await self.collection.create_search_index(model)
+        elif plan["action"] == "rebuild":
+            await self.collection.update_search_index(
+                plan["index_name"],
+                plan["desired"],
+            )
+        return {**plan, "acknowledged": True}
+
+    async def rollback_search_index_plan(
+        self,
+        applied_plan: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Undo an applied graph Search index plan.
+
+        Args:
+            applied_plan: Applied plan containing the previous definition.
+
+        Returns:
+            Acknowledged rollback operation.
+        """
+        index_name = "entity_id_search_idx"
+        if applied_plan.get("index_name") != index_name:
+            raise ValueError("Applied plan does not target the graph search index")
+        action = applied_plan.get("action")
+        previous = applied_plan.get("current")
+        if action == "create" and previous is None:
+            await self.collection.drop_search_index(index_name)
+            return {
+                "action": "drop",
+                "index_name": index_name,
+                "acknowledged": True,
+            }
+        if action == "rebuild" and isinstance(previous, dict):
+            await self.collection.update_search_index(index_name, previous)
+            return {
+                "action": "restore",
+                "index_name": index_name,
+                "definition": previous,
+                "acknowledged": True,
+            }
+        if action == "noop":
+            return {
+                "action": "noop",
+                "index_name": index_name,
+                "acknowledged": True,
+            }
+        raise ValueError("Applied plan does not contain usable rollback material")
+
     async def drop(self) -> dict[str, str]:
         """Drop the storage by removing all documents in the collection.
 
@@ -2283,13 +2483,6 @@ class MongoVectorDBStorage(BaseVectorStorage):
 
             self._data = await get_or_create_collection(self.db, self._collection_name)
 
-            # Ensure vector index exists
-            await self.create_vector_index_if_not_exists()
-
-            # Create text search index for hybrid search (MongoDB Atlas feature)
-            # This enables $rankFusion and $scoreFusion hybrid search
-            await self.create_text_search_index_if_not_exists()
-
             logger.debug(
                 f"[{self.workspace}] Use MongoDB as VDB {self._collection_name}"
             )
@@ -2299,6 +2492,454 @@ class MongoVectorDBStorage(BaseVectorStorage):
             await ClientManager.release_client(self.db)
             self.db = None
             self._data = None
+
+    def _vector_embedding_backend(self) -> str:
+        if self.namespace != "chunks":
+            return "client"
+        return self.global_config.get("vector_embedding_backend", "client")
+
+    def build_vector_index_definition(
+        self,
+        quantization: str | None = None,
+        indexing_method: str | None = None,
+        hnsw_options: dict[str, int] | None = None,
+        num_dimensions: int | None = None,
+        similarity: str | None = None,
+    ) -> dict[str, Any]:
+        """Build the desired vector index definition without mutating MongoDB."""
+        embedding_backend = self._vector_embedding_backend()
+        if embedding_backend not in {"client", "automated"}:
+            raise ValueError("vector_embedding_backend must be 'client' or 'automated'")
+        supported_quantization = {None, "none", "scalar", "binary"}
+        if embedding_backend == "automated":
+            supported_quantization.add("binaryNoRescore")
+        if quantization not in supported_quantization:
+            raise ValueError(
+                "quantization is not supported for the selected embedding backend"
+            )
+        effective_dimensions = (
+            num_dimensions
+            if num_dimensions is not None
+            else getattr(self.embedding_func, "embedding_dim", None)
+        )
+        if num_dimensions is not None and (
+            type(num_dimensions) is not int or not 1 <= num_dimensions <= 8192
+        ):
+            raise ValueError("num_dimensions must be an integer from 1 through 8192")
+        if similarity not in {None, "euclidean", "cosine", "dotProduct"}:
+            raise ValueError(
+                "similarity must be 'euclidean', 'cosine', 'dotProduct', or None"
+            )
+        if (
+            quantization in {"binary", "binaryNoRescore"}
+            and effective_dimensions is not None
+            and effective_dimensions % 8 != 0
+        ):
+            raise ValueError(
+                "binary quantization requires dimensions to be a multiple of 8"
+            )
+        if indexing_method not in {None, "flat", "hnsw"}:
+            raise ValueError("indexing_method must be 'flat', 'hnsw', or None")
+        if hnsw_options is not None:
+            if indexing_method != "hnsw":
+                raise ValueError("hnswOptions require indexing_method='hnsw'")
+            if set(hnsw_options) - {"maxEdges", "numEdgeCandidates"} or any(
+                type(value) is not int for value in hnsw_options.values()
+            ):
+                raise ValueError(
+                    "hnswOptions support maxEdges and numEdgeCandidates integers"
+                )
+            if not 16 <= hnsw_options.get("maxEdges", 16) <= 64 or not (
+                100 <= hnsw_options.get("numEdgeCandidates", 100) <= 3200
+            ):
+                raise ValueError("hnswOptions values are outside the documented range")
+        if embedding_backend == "automated":
+            model = self.global_config.get("automated_embedding_model")
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError(
+                    "automated_embedding_model is required for automated embedding"
+                )
+            vector_field = {
+                "type": "autoEmbed",
+                "modality": "text",
+                "path": "content",
+                "model": model,
+            }
+            if quantization is not None:
+                vector_field["quantization"] = quantization
+            if num_dimensions is not None:
+                vector_field["numDimensions"] = num_dimensions
+            if similarity is not None:
+                vector_field["similarity"] = similarity
+            if indexing_method is not None:
+                vector_field["indexingMethod"] = indexing_method
+            if hnsw_options is not None:
+                vector_field["hnswOptions"] = dict(hnsw_options)
+        else:
+            if (
+                num_dimensions is not None
+                and num_dimensions != self.embedding_func.embedding_dim
+            ):
+                raise ValueError(
+                    "num_dimensions must match the client embedding dimensions"
+                )
+            vector_field = {
+                "type": "vector",
+                "numDimensions": effective_dimensions,
+                "path": "vector",
+                "similarity": similarity or "cosine",
+                "quantization": quantization or "none",
+                "indexingMethod": indexing_method or "hnsw",
+            }
+            if hnsw_options is not None:
+                vector_field["hnswOptions"] = dict(hnsw_options)
+        filter_paths = ["created_at", "file_path", "entity_name"]
+        filter_paths.extend(self._filterable_metadata_fields())
+        return {
+            "fields": [vector_field]
+            + [{"type": "filter", "path": path} for path in dict.fromkeys(filter_paths)]
+        }
+
+    def _filterable_metadata_fields(self) -> dict[str, str]:
+        fields = self.global_config.get("filterable_metadata_fields", {})
+        supported_types = {"token", "number", "date", "boolean", "objectId", "uuid"}
+        for path, field_type in fields.items():
+            if (
+                not path.startswith("metadata.")
+                or path.count(".") != 1
+                or field_type not in supported_types
+            ):
+                raise ValueError(
+                    "Filterable metadata fields require metadata.<name> paths and "
+                    "supported Atlas Search field types"
+                )
+        return fields
+
+    def build_text_search_index_definition(self) -> dict[str, Any]:
+        """Build the desired Atlas Search definition without mutating MongoDB."""
+
+        fields: dict[str, Any] = {
+            "content": {
+                "type": "string",
+                "analyzer": "lucene.standard",
+            }
+        }
+        metadata_fields = self._filterable_metadata_fields()
+        if metadata_fields:
+            fields["metadata"] = {
+                "type": "document",
+                "dynamic": False,
+                "fields": {
+                    path.removeprefix("metadata."): {"type": field_type}
+                    for path, field_type in metadata_fields.items()
+                },
+            }
+        return {"mappings": {"dynamic": False, "fields": fields}}
+
+    async def list_search_index_statuses(self) -> list[SearchIndexStatus]:
+        """Return stable status records for search and vector indexes."""
+        cursor = await self._data.list_search_indexes()
+        indexes = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
+        indexes_by_name = {index.get("name", ""): index for index in indexes}
+        expected = [
+            (self._index_name, "vectorSearch"),
+        ]
+        desired_definitions = {
+            self._index_name: self.build_vector_index_definition(),
+        }
+        if self.namespace == "chunks":
+            expected.append((self._text_index_name(), "search"))
+            desired_definitions[self._text_index_name()] = (
+                self.build_text_search_index_definition()
+            )
+        expected_names = {name for name, _ in expected}
+        observed_extras = [
+            (index.get("name", ""), index.get("type", "search"))
+            for index in indexes
+            if index.get("name", "") not in expected_names
+        ]
+        statuses: list[SearchIndexStatus] = []
+        for name, index_type in expected + observed_extras:
+            index = indexes_by_name.get(name, {})
+            status = str(index.get("status", "unknown")).lower()
+            exists = bool(index)
+            if not exists:
+                status = "does_not_exist"
+            queryable = bool(index.get("queryable", False))
+            observed_definition = index.get("latestDefinition") or index.get(
+                "definition"
+            )
+            desired_definition = desired_definitions.get(name)
+            definition_matches = (
+                desired_definition is None
+                or search_index_definition_satisfies(
+                    observed_definition,
+                    desired_definition,
+                )
+            )
+            fresh = status == "ready" and definition_matches
+            status_detail = index.get("statusDetail")
+            statuses.append(
+                {
+                    "name": name,
+                    "type": index.get("type", index_type),
+                    "status": status,
+                    "queryable": queryable,
+                    "failure": (
+                        status_detail or index.get("error") or None
+                        if status == "failed"
+                        else None
+                    ),
+                    "exists": exists,
+                    "fresh": fresh,
+                    "transitioning": status in {"pending", "building", "deleting"},
+                    "healthy": fresh and queryable,
+                    "status_detail": status_detail,
+                    "main_index": index.get("mainIndex"),
+                    "staged_index": index.get("stagedIndex"),
+                    "backend_metadata": dict(index),
+                }
+            )
+        return statuses
+
+    async def wait_for_search_index(
+        self,
+        index_name: str,
+        timeout_seconds: float = 300,
+        poll_interval_seconds: float = 2,
+    ) -> SearchIndexStatus:
+        """Wait until an asynchronous search-index operation becomes usable."""
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if poll_interval_seconds < 0:
+            raise ValueError("poll_interval_seconds cannot be negative")
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+        last_status: SearchIndexStatus | None = None
+        while loop.time() < deadline:
+            statuses = await self.list_search_index_statuses()
+            last_status = next(
+                (status for status in statuses if status["name"] == index_name),
+                None,
+            )
+            if last_status is not None:
+                if last_status["healthy"]:
+                    return last_status
+                if last_status["status"] == "failed":
+                    detail = last_status["failure"] or "unknown failure"
+                    raise SearchIndexLifecycleError(
+                        f"Search index {index_name!r} failed: {detail}"
+                    )
+            await asyncio.sleep(poll_interval_seconds)
+
+        observed = last_status["status"] if last_status is not None else "unknown"
+        raise SearchIndexLifecycleError(
+            f"Search index {index_name!r} did not become ready within "
+            f"{timeout_seconds} seconds; last status: {observed}"
+        )
+
+    def _text_index_name(self) -> str:
+        if self.workspace:
+            return f"text_search_index_{self._collection_name}"
+        return f"text_search_index_{self.namespace}"
+
+    async def plan_vector_index(
+        self,
+        quantization: str | None = None,
+        indexing_method: str | None = None,
+        hnsw_options: dict[str, int] | None = None,
+        num_dimensions: int | None = None,
+        similarity: str | None = None,
+    ) -> dict[str, Any]:
+        """Compare desired and observed index definitions without applying changes."""
+        desired = self.build_vector_index_definition(
+            quantization,
+            indexing_method,
+            hnsw_options,
+            num_dimensions,
+            similarity,
+        )
+        cursor = await self._data.list_search_indexes()
+        indexes = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
+        current_index = next(
+            (index for index in indexes if index.get("name") == self._index_name),
+            None,
+        )
+        if current_index is None:
+            return {
+                "action": "create",
+                "index_name": self._index_name,
+                "current": None,
+                "desired": desired,
+            }
+        current = current_index.get("latestDefinition") or current_index.get(
+            "definition"
+        )
+        action = (
+            "noop" if search_index_definition_satisfies(current, desired) else "rebuild"
+        )
+        return {
+            "action": action,
+            "index_name": self._index_name,
+            "current": current,
+            "desired": desired,
+        }
+
+    async def plan_text_search_index(self) -> dict[str, Any]:
+        """Compare desired and observed chunk text-search definitions.
+
+        Returns:
+            Desired, observed, and required index action.
+        """
+        index_name = self._text_index_name()
+        desired = self.build_text_search_index_definition()
+        cursor = await self._data.list_search_indexes()
+        indexes = await cursor.to_list(length=_DEFAULT_CURSOR_LIMIT)
+        current_index = next(
+            (index for index in indexes if index.get("name") == index_name),
+            None,
+        )
+        if current_index is None:
+            return {
+                "action": "create",
+                "index_name": index_name,
+                "current": None,
+                "desired": desired,
+            }
+        current = current_index.get("latestDefinition") or current_index.get(
+            "definition"
+        )
+        return {
+            "action": (
+                "noop"
+                if search_index_definition_satisfies(current, desired)
+                else "rebuild"
+            ),
+            "index_name": index_name,
+            "current": current,
+            "desired": desired,
+        }
+
+    async def apply_vector_index_plan(
+        self,
+        quantization: str | None = None,
+        indexing_method: str | None = None,
+        hnsw_options: dict[str, int] | None = None,
+        num_dimensions: int | None = None,
+        similarity: str | None = None,
+    ) -> dict[str, Any]:
+        """Explicitly apply a previously inspectable vector index plan."""
+        plan = await self.plan_vector_index(
+            quantization,
+            indexing_method,
+            hnsw_options,
+            num_dimensions,
+            similarity,
+        )
+        if plan["action"] == "create":
+            model = SearchIndexModel(
+                definition=plan["desired"],
+                name=self._index_name,
+                type="vectorSearch",
+            )
+            await self._data.create_search_index(model)
+        elif plan["action"] == "rebuild":
+            await self._data.update_search_index(self._index_name, plan["desired"])
+        return {**plan, "acknowledged": True}
+
+    async def apply_text_search_index_plan(self) -> dict[str, Any]:
+        """Explicitly create or update the planned chunk text-search index.
+
+        Returns:
+            Applied plan with acknowledgement and rollback material.
+        """
+        plan = await self.plan_text_search_index()
+        if plan["action"] == "create":
+            model = SearchIndexModel(
+                definition=plan["desired"],
+                name=plan["index_name"],
+                type="search",
+            )
+            await self._data.create_search_index(model)
+        elif plan["action"] == "rebuild":
+            await self._data.update_search_index(
+                plan["index_name"],
+                plan["desired"],
+            )
+        return {**plan, "acknowledged": True}
+
+    async def rollback_vector_index(
+        self,
+        applied_plan: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Undo an applied vector-index plan using its recorded prior definition."""
+        if applied_plan.get("index_name") != self._index_name:
+            raise ValueError("Applied plan does not target this vector index")
+        action = applied_plan.get("action")
+        previous = applied_plan.get("current")
+        if action == "create" and previous is None:
+            await self._data.drop_search_index(self._index_name)
+            return {
+                "action": "drop",
+                "index_name": self._index_name,
+                "acknowledged": True,
+            }
+        if action == "rebuild" and isinstance(previous, dict):
+            await self._data.update_search_index(self._index_name, previous)
+            return {
+                "action": "restore",
+                "index_name": self._index_name,
+                "definition": previous,
+                "acknowledged": True,
+            }
+        if action == "noop":
+            return {
+                "action": "noop",
+                "index_name": self._index_name,
+                "acknowledged": True,
+            }
+        raise ValueError("Applied plan does not contain usable rollback material")
+
+    async def rollback_text_search_index(
+        self,
+        applied_plan: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Undo an applied text-search plan using its recorded definition.
+
+        Args:
+            applied_plan: Applied plan containing the previous definition.
+
+        Returns:
+            Acknowledged rollback operation.
+        """
+        index_name = self._text_index_name()
+        if applied_plan.get("index_name") != index_name:
+            raise ValueError("Applied plan does not target this text search index")
+        action = applied_plan.get("action")
+        previous = applied_plan.get("current")
+        if action == "create" and previous is None:
+            await self._data.drop_search_index(index_name)
+            return {
+                "action": "drop",
+                "index_name": index_name,
+                "acknowledged": True,
+            }
+        if action == "rebuild" and isinstance(previous, dict):
+            await self._data.update_search_index(index_name, previous)
+            return {
+                "action": "restore",
+                "index_name": index_name,
+                "definition": previous,
+                "acknowledged": True,
+            }
+        if action == "noop":
+            return {
+                "action": "noop",
+                "index_name": index_name,
+                "acknowledged": True,
+            }
+        raise ValueError("Applied plan does not contain usable rollback material")
 
     async def create_vector_index_if_not_exists(self):
         """Creates an Atlas Vector Search index."""
@@ -2312,30 +2953,8 @@ class MongoVectorDBStorage(BaseVectorStorage):
                     )
                     return
 
-            # [Rule: index-filter-fields] Declare filter fields for prefiltering
             search_index_model = SearchIndexModel(
-                definition={
-                    "fields": [
-                        {
-                            "type": "vector",
-                            "numDimensions": self.embedding_func.embedding_dim,
-                            "path": "vector",
-                            "similarity": "cosine",
-                        },
-                        {
-                            "type": "filter",
-                            "path": "created_at",
-                        },
-                        {
-                            "type": "filter",
-                            "path": "file_path",
-                        },
-                        {
-                            "type": "filter",
-                            "path": "entity_name",
-                        },
-                    ]
-                },
+                definition=self.build_vector_index_definition(),
                 name=self._index_name,
                 type="vectorSearch",
             )
@@ -2362,7 +2981,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
         except PyMongoError as e:
             error_msg = f"[{self.workspace}] Error creating vector index {self._index_name}: {e}"
             logger.error(error_msg)
-            raise SystemExit(
+            raise SearchIndexLifecycleError(
                 f"Failed to create MongoDB vector index. Program cannot continue. {error_msg}"
             ) from e
 
@@ -2372,7 +2991,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
             return
 
         # Add current time as Unix timestamp
-        current_time = int(time.time())
+        current_time = _unix_timestamp()
 
         list_data = [
             {
@@ -2382,17 +3001,18 @@ class MongoVectorDBStorage(BaseVectorStorage):
             }
             for k, v in data.items()
         ]
-        contents = [v["content"] for v in data.values()]
-        batches = [
-            contents[i : i + self._max_batch_size]
-            for i in range(0, len(contents), self._max_batch_size)
-        ]
+        if self._vector_embedding_backend() == "client":
+            contents = [v["content"] for v in data.values()]
+            batches = [
+                contents[i : i + self._max_batch_size]
+                for i in range(0, len(contents), self._max_batch_size)
+            ]
 
-        embedding_tasks = [self.embedding_func(batch) for batch in batches]
-        embeddings_list = await asyncio.gather(*embedding_tasks)
-        embeddings = np.concatenate(embeddings_list)
-        for i, d in enumerate(list_data):
-            d["vector"] = np.array(embeddings[i], dtype=np.float32).tolist()
+            embedding_tasks = [self.embedding_func(batch) for batch in batches]
+            embeddings_list = await asyncio.gather(*embedding_tasks)
+            embeddings = np.concatenate(embeddings_list)
+            for i, d in enumerate(list_data):
+                d["vector"] = np.array(embeddings[i], dtype=np.float32).tolist()
 
         # [Rule: query-batch-operations] Use bulk_write instead of individual update_one
         if list_data:
@@ -2408,7 +3028,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
         self,
         query: str,
         top_k: int,
-        query_embedding: list[float] = None,
+        query_embedding: list[float] | None = None,
         filter_config: "VectorSearchFilterConfig | None" = None,
     ) -> list[dict[str, Any]]:
         """Queries the vector database using Atlas Vector Search with optional prefiltering.
@@ -2449,7 +3069,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
             "limit": top_k,
         }
 
-        # Add prefilters if provided (MongoDB 8.0+ feature)
+        # Add prefilters if provided.
         if filter_config:
             from hybridrag.enhancements.filters import build_vector_search_filters
 
@@ -2501,7 +3121,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
         This is the "Lexical Free Filter" capability - apply filters
         without needing to provide a text query for Atlas Search.
 
-        Uses MongoDB 8.0+ $vectorSearch prefiltering with standard operators.
+        Uses $vectorSearch prefiltering with standard operators.
 
         Args:
             query_vector: Query embedding vector
@@ -2592,11 +3212,9 @@ class MongoVectorDBStorage(BaseVectorStorage):
                 for doc in results
             ]
 
-        except Exception as e:
-            logger.error(f"[VECTOR_FILTER] Prefiltered search failed: {e}")
-            # Fallback to unfiltered vector search
-            logger.warning("[VECTOR_FILTER] Falling back to unfiltered vector search")
-            return await self.query("", top_k, query_embedding=query_vector)
+        except PyMongoError as e:
+            logger.error("[VECTOR_FILTER] Filtered vector search failed", exc_info=True)
+            raise RetrievalExecutionError("filtered vector search failed") from e
 
     async def index_done_callback(self) -> None:
         # Mongo handles persistence automatically
@@ -2605,10 +3223,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
     async def create_text_search_index_if_not_exists(self) -> None:
         """Creates an Atlas Search index for full-text search (hybrid search support)."""
         # Determine text index name based on workspace
-        if self.workspace:
-            text_index_name = f"text_search_index_{self._collection_name}"
-        else:
-            text_index_name = f"text_search_index_{self.namespace}"
+        text_index_name = self._text_index_name()
 
         try:
             indexes_cursor = await self._data.list_search_indexes()
@@ -2621,17 +3236,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
                     return
 
             search_index_model = SearchIndexModel(
-                definition={
-                    "mappings": {
-                        "dynamic": False,
-                        "fields": {
-                            "content": {
-                                "type": "string",
-                                "analyzer": "lucene.standard",
-                            }
-                        },
-                    }
-                },
+                definition=self.build_text_search_index_definition(),
                 name=text_index_name,
                 type="search",
             )
@@ -2642,18 +3247,24 @@ class MongoVectorDBStorage(BaseVectorStorage):
             )
 
         except PyMongoError as e:
-            logger.warning(
-                f"[{self.workspace}] Error creating text search index {text_index_name}: {e}. "
-                f"Hybrid search will fall back to vector-only search."
-            )
+            raise SearchIndexLifecycleError(
+                f"Failed to create MongoDB text search index {text_index_name!r}"
+            ) from e
 
     async def hybrid_query(
         self,
         query: str,
         top_k: int,
-        query_embedding: list[float] = None,
-        use_rank_fusion: bool = True,
-    ) -> list[dict[str, Any]]:
+        query_embedding: list[float] | None = None,
+        use_rank_fusion: bool = False,
+        filter_config: FilterConfig | None = None,
+        security_context: RetrievalSecurityContext | None = None,
+        vector_search_mode: Literal["ann", "exact"] = "ann",
+        native_rerank_model: (
+            Literal["rerank-2.5", "rerank-2.5-lite", "rerank-2", "rerank-2-lite"] | None
+        ) = None,
+        explain: bool = False,
+    ) -> list[dict[str, Any]] | dict[str, Any]:
         """
         Perform hybrid search using MongoDB's $rankFusion or $scoreFusion.
 
@@ -2665,33 +3276,131 @@ class MongoVectorDBStorage(BaseVectorStorage):
             top_k: Number of results to return
             query_embedding: Pre-computed query embedding (optional)
             use_rank_fusion: Use RRF (True) or weighted score fusion (False)
+            filter_config: Optional backend-neutral metadata filter
+            security_context: Mandatory server-owned metadata constraints
+            vector_search_mode: Approximate or exact vector execution
+            native_rerank_model: Optional MongoDB native reranking model
+            explain: Return the generated pipeline without executing it
 
         Returns:
             List of documents with hybrid fusion scores
         """
-        # Get query vector
-        if query_embedding is not None:
-            if hasattr(query_embedding, "tolist"):
-                query_vector = query_embedding.tolist()
+        if vector_search_mode not in {"ann", "exact"}:
+            raise ValueError("vector_search_mode must be 'ann' or 'exact'")
+        if native_rerank_model not in {
+            None,
+            "rerank-2.5",
+            "rerank-2.5-lite",
+            "rerank-2",
+            "rerank-2-lite",
+        }:
+            raise ValueError("native_rerank_model is not supported")
+        effective_filters = list(
+            security_context.mandatory_filters if security_context is not None else ()
+        )
+        if filter_config is not None:
+            effective_filters.append(filter_config)
+        if effective_filters:
+            allowed_fields = set(self._filterable_metadata_fields())
+            rejected_fields = sorted(
+                predicate.field
+                for config in effective_filters
+                for predicate in config.predicates
+                if predicate.field not in allowed_fields
+            )
+            if rejected_fields:
+                raise ValueError(
+                    "Filter fields are not configured as filterable: "
+                    + ", ".join(rejected_fields)
+                )
+            from hybridrag.enhancements.filters import (
+                validate_filter_config_for_mappings,
+            )
+
+            field_types = self._filterable_metadata_fields()
+            for config in effective_filters:
+                validate_filter_config_for_mappings(config, field_types)
+
+        embedding_backend = self._vector_embedding_backend()
+        query_vector = None
+        if embedding_backend == "automated":
+            if query_embedding is not None:
+                raise ValueError(
+                    "query_embedding cannot be supplied with automated embedding"
+                )
+        elif embedding_backend == "client":
+            if query_embedding is not None:
+                if hasattr(query_embedding, "tolist"):
+                    query_vector = query_embedding.tolist()
+                else:
+                    query_vector = list(query_embedding)
             else:
-                query_vector = list(query_embedding)
+                embedding = await self.embedding_func([query], _priority=5)
+                query_vector = embedding[0].tolist()
         else:
-            embedding = await self.embedding_func([query], _priority=5)
-            query_vector = embedding[0].tolist()
+            raise ValueError("vector_embedding_backend must be 'client' or 'automated'")
 
         # Determine index names based on workspace
-        if self.workspace:
-            text_index_name = f"text_search_index_{self._collection_name}"
-        else:
-            text_index_name = f"text_search_index_{self.namespace}"
+        text_index_name = self._text_index_name()
 
         logger.info(
             f"[HYBRID_SEARCH] Starting {'$rankFusion' if use_rank_fusion else '$scoreFusion'} "
             f"search: query='{query[:50]}...', top_k={top_k}"
         )
 
+        vector_search: dict[str, Any] = {
+            "index": self._index_name,
+            "limit": top_k * 2,
+        }
+        if embedding_backend == "automated":
+            model = self.global_config.get("automated_embedding_model")
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError(
+                    "automated_embedding_model is required for automated embedding"
+                )
+            vector_search.update(
+                {
+                    "path": "content",
+                    "query": {"text": query},
+                    "model": model,
+                }
+            )
+        else:
+            vector_search.update({"path": "vector", "queryVector": query_vector})
+        if vector_search_mode == "exact":
+            vector_search["exact"] = True
+        else:
+            vector_search["numCandidates"] = max(100, top_k * 20)
+        text_search: dict[str, Any] = {
+            "index": text_index_name,
+            "text": {"query": query, "path": "content"},
+        }
+        if effective_filters:
+            from hybridrag.enhancements.filters import (
+                compile_retrieval_filter_to_atlas,
+                compile_retrieval_filter_to_mql,
+            )
+
+            vector_search["filter"] = compile_retrieval_filter_to_mql(
+                filter_config,
+                security_context,
+            )
+            text_search = {
+                "index": text_index_name,
+                "compound": {
+                    "must": [{"text": {"query": query, "path": "content"}}],
+                    "filter": compile_retrieval_filter_to_atlas(
+                        filter_config,
+                        security_context,
+                    ),
+                },
+            }
+
+        vector_pipeline = [{"$vectorSearch": vector_search}]
+        text_pipeline = [{"$search": text_search}, {"$limit": top_k * 2}]
+
         if use_rank_fusion:
-            # Build $rankFusion pipeline (MongoDB 8.1+ syntax)
+            # Build the native $rankFusion pipeline.
             # Uses weighted pipelines for Reciprocal Rank Fusion
             # Reference: https://github.com/mongodb-developer/GenAI-Showcase
             pipeline = [
@@ -2699,29 +3408,8 @@ class MongoVectorDBStorage(BaseVectorStorage):
                     "$rankFusion": {
                         "input": {
                             "pipelines": {
-                                "vectorPipeline": [
-                                    {
-                                        "$vectorSearch": {
-                                            "index": self._index_name,
-                                            "path": "vector",
-                                            "queryVector": query_vector,
-                                            "numCandidates": 100,
-                                            "limit": top_k * 2,
-                                        }
-                                    }
-                                ],
-                                "textPipeline": [
-                                    {
-                                        "$search": {
-                                            "index": text_index_name,
-                                            "text": {
-                                                "query": query,
-                                                "path": "content",
-                                            },
-                                        }
-                                    },
-                                    {"$limit": top_k * 2},
-                                ],
+                                "vectorPipeline": vector_pipeline,
+                                "textPipeline": text_pipeline,
                             }
                         },
                         "combination": {
@@ -2733,13 +3421,16 @@ class MongoVectorDBStorage(BaseVectorStorage):
                         "scoreDetails": True,  # Include score breakdown
                     }
                 },
-                {"$addFields": {"scoreDetails": {"$meta": "scoreDetails"}}},
-                {"$addFields": {"score": "$scoreDetails.value"}},
-                {"$limit": top_k},
-                {"$project": {"vector": 0}},
+                {
+                    "$addFields": {
+                        "scoreDetails": {"$meta": "scoreDetails"},
+                        "score": {"$meta": "score"},
+                        "fusion_score": {"$meta": "score"},
+                    }
+                },
             ]
         else:
-            # Build $scoreFusion pipeline (MongoDB 8.1+ syntax)
+            # Build the native $scoreFusion pipeline.
             # Uses sigmoid normalization and expression-based weighted combination
             # Reference: https://www.mongodb.com/docs/atlas/atlas-vector-search/score-fusion/
             pipeline = [
@@ -2747,29 +3438,8 @@ class MongoVectorDBStorage(BaseVectorStorage):
                     "$scoreFusion": {
                         "input": {
                             "pipelines": {
-                                "vectorPipeline": [
-                                    {
-                                        "$vectorSearch": {
-                                            "index": self._index_name,
-                                            "path": "vector",
-                                            "queryVector": query_vector,
-                                            "numCandidates": 100,
-                                            "limit": top_k * 2,
-                                        }
-                                    }
-                                ],
-                                "textPipeline": [
-                                    {
-                                        "$search": {
-                                            "index": text_index_name,
-                                            "text": {
-                                                "query": query,
-                                                "path": "content",
-                                            },
-                                        }
-                                    },
-                                    {"$limit": top_k * 2},
-                                ],
+                                "vectorPipeline": vector_pipeline,
+                                "textPipeline": text_pipeline,
                             },
                             "normalization": "sigmoid",  # Normalize scores to [0, 1]
                         },
@@ -2778,10 +3448,10 @@ class MongoVectorDBStorage(BaseVectorStorage):
                             "expression": {
                                 "$sum": [
                                     {
-                                        "$multiply": ["$vectorPipeline", 0.6]
+                                        "$multiply": ["$$vectorPipeline", 0.6]
                                     },  # Vector weight
                                     {
-                                        "$multiply": ["$textPipeline", 0.4]
+                                        "$multiply": ["$$textPipeline", 0.4]
                                     },  # Text weight
                                 ]
                             },
@@ -2789,11 +3459,51 @@ class MongoVectorDBStorage(BaseVectorStorage):
                         "scoreDetails": True,
                     }
                 },
-                {"$addFields": {"scoreDetails": {"$meta": "scoreDetails"}}},
-                {"$addFields": {"score": "$scoreDetails.value"}},
-                {"$limit": top_k},
-                {"$project": {"vector": 0}},
+                {
+                    "$addFields": {
+                        "scoreDetails": {"$meta": "scoreDetails"},
+                        "score": {"$meta": "score"},
+                        "fusion_score": {"$meta": "score"},
+                    }
+                },
             ]
+
+        if native_rerank_model is not None:
+            pipeline.extend(
+                [
+                    {
+                        "$set": {
+                            "content": {"$ifNull": ["$content", ""]},
+                            "fusion_score": {"$meta": "score"},
+                        }
+                    },
+                    {
+                        "$rerank": {
+                            "query": {"text": query},
+                            "path": "content",
+                            "numDocsToRerank": min(top_k * 2, 1000),
+                            "model": native_rerank_model,
+                        }
+                    },
+                    {
+                        "$addFields": {
+                            "rerank_score": {"$meta": "score"},
+                            "score": {"$meta": "score"},
+                        }
+                    },
+                ]
+            )
+        pipeline.extend([{"$limit": top_k}, {"$project": {"vector": 0}}])
+
+        if explain:
+            return {
+                "fusion_strategy": "rank" if use_rank_fusion else "score",
+                "pipeline": pipeline,
+                "vector_index": self._index_name,
+                "text_index": text_index_name,
+                "vector_search_mode": vector_search_mode,
+                "native_rerank_model": native_rerank_model,
+            }
 
         try:
             cursor = await self._data.aggregate(
@@ -2821,15 +3531,59 @@ class MongoVectorDBStorage(BaseVectorStorage):
 
             return formatted_results
 
+        except OperationFailure as e:
+            strategy = "rank" if use_rank_fusion else "score"
+            if is_retrieval_capability_error(e):
+                logger.error("[HYBRID_SEARCH] %s fusion is unavailable", strategy)
+                raise RetrievalCapabilityError(
+                    f"{strategy} fusion is unavailable"
+                ) from e
+            logger.error("[HYBRID_SEARCH] %s fusion failed", strategy, exc_info=True)
+            raise RetrievalExecutionError(f"{strategy} fusion failed") from e
         except PyMongoError as e:
-            logger.warning(
-                f"[HYBRID_SEARCH] {'$rankFusion' if use_rank_fusion else '$scoreFusion'} "
-                f"failed: {e}. Falling back to manual RRF."
-            )
-            # Fallback to manual RRF (works on all MongoDB versions)
-            return await self._manual_rrf_search(
-                query, query_vector, text_index_name, top_k
-            )
+            strategy = "rank" if use_rank_fusion else "score"
+            logger.error("[HYBRID_SEARCH] %s fusion failed", strategy, exc_info=True)
+            raise RetrievalExecutionError(f"{strategy} fusion failed") from e
+
+    async def compile_hybrid_query(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        """Compile a hybrid pipeline and redact embedded query vectors.
+
+        Args:
+            query: Query text compiled into the pipeline.
+            **kwargs: Valid ``hybrid_query`` options.
+
+        Returns:
+            Redacted pipeline and effective retrieval options.
+        """
+        if self._vector_embedding_backend() == "client" and (
+            "query_embedding" not in kwargs or kwargs["query_embedding"] is None
+        ):
+            kwargs["query_embedding"] = []
+        plan = await self.hybrid_query(query, explain=True, **kwargs)
+        return _redact_query_vectors(plan)
+
+    async def explain_hybrid_query(self, query: str, **kwargs: Any) -> dict[str, Any]:
+        """Execute MongoDB explain for a hybrid plan and redact query vectors."""
+        plan = await self.hybrid_query(query, explain=True, **kwargs)
+        command = {
+            "explain": {
+                "aggregate": self._collection_name,
+                "pipeline": plan["pipeline"],
+                "cursor": {},
+            },
+            "verbosity": "executionStats",
+        }
+        try:
+            execution = await self._data.database.command(command)
+        except PyMongoError as error:
+            raise RetrievalExecutionError(
+                "MongoDB hybrid query explanation failed"
+            ) from error
+        return {
+            "kind": "server_explain",
+            "plan": _redact_query_vectors(plan),
+            "execution": _redact_query_vectors(execution),
+        }
 
     async def _manual_rrf_search(
         self,
@@ -2840,7 +3594,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
         rrf_k: int = 60,
     ) -> list[dict[str, Any]]:
         """
-        Manual Reciprocal Rank Fusion for MongoDB versions without $rankFusion.
+        Explicit manual Reciprocal Rank Fusion helper.
 
         Runs vector search and text search separately, then merges with RRF formula:
         score = Σ (1 / (k + rank_i)) for each document across all result lists
@@ -3163,15 +3917,12 @@ class MongoVectorDBStorage(BaseVectorStorage):
             result = await self._data.delete_many({})
             deleted_count = result.deleted_count
 
-            # Recreate vector index
-            await self.create_vector_index_if_not_exists()
-
             logger.info(
-                f"[{self.workspace}] Dropped {deleted_count} documents from vector storage {self._collection_name} and recreated vector index"
+                f"[{self.workspace}] Dropped {deleted_count} documents from vector storage {self._collection_name}"
             )
             return {
                 "status": "success",
-                "message": f"{deleted_count} documents dropped and vector index recreated",
+                "message": f"{deleted_count} documents dropped",
             }
         except PyMongoError as e:
             logger.error(
@@ -3182,24 +3933,27 @@ class MongoVectorDBStorage(BaseVectorStorage):
 
 # [L14] Module-level cache of known collection names to avoid
 # calling list_collection_names on every get_or_create_collection invocation.
-_known_collections: set[str] = set()
+_known_collections: set[tuple[int, str, str]] = set()
 
 
 async def get_or_create_collection(db: AsyncDatabase, collection_name: str):
     global _known_collections
+    cache_key = (id(db.client), db.name, collection_name)
 
     # Fast path: already known to exist
-    if collection_name in _known_collections:
+    if cache_key in _known_collections:
         logger.debug(f"Collection '{collection_name}' found in cache.")
         return db.get_collection(collection_name)
 
     # Slow path: check server and populate cache
     collection_names = await db.list_collection_names()
-    _known_collections.update(collection_names)
+    _known_collections.update(
+        (id(db.client), db.name, name) for name in collection_names
+    )
 
-    if collection_name not in _known_collections:
+    if cache_key not in _known_collections:
         collection = await db.create_collection(collection_name)
-        _known_collections.add(collection_name)
+        _known_collections.add(cache_key)
         logger.info(f"Created collection: {collection_name}")
         return collection
     else:

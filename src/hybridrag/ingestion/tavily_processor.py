@@ -7,9 +7,12 @@ Follows official Tavily SDK patterns and integrates with HybridRAG ingestion pip
 
 from __future__ import annotations
 
+# Optional Tavily imports and local fallback exception classes intentionally share
+# one public compatibility surface.
+# pyright: reportRedeclaration=false, reportAssignmentType=false
 import importlib.util
 import logging
-from typing import Literal
+from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 from .types import ProcessedDocument
@@ -21,33 +24,69 @@ logger = logging.getLogger("hybridrag.ingestion.tavily")
 # Per Python docs: https://docs.python.org/3/library/importlib.html#checking-if-a-module-can-be-imported
 TAVILY_AVAILABLE = importlib.util.find_spec("tavily") is not None
 
+
+class _FallbackBadRequestError(Exception):
+    pass
+
+
+class _FallbackForbiddenError(Exception):
+    pass
+
+
+class _FallbackInvalidAPIKeyError(Exception):
+    pass
+
+
+class _FallbackMissingAPIKeyError(Exception):
+    pass
+
+
+class _FallbackTavilyTimeoutError(Exception):
+    pass
+
+
+class _FallbackUsageLimitExceededError(Exception):
+    pass
+
+
 if TAVILY_AVAILABLE:
-    from tavily import AsyncTavilyClient
+    from tavily import AsyncTavilyClient as _AsyncTavilyClient
     from tavily.errors import (
-        BadRequestError,
-        ForbiddenError,
-        InvalidAPIKeyError,
-        MissingAPIKeyError,
-        UsageLimitExceededError,
+        BadRequestError as _BadRequestError,
     )
     from tavily.errors import (
-        TimeoutError as TavilyTimeoutError,
+        ForbiddenError as _ForbiddenError,
+    )
+    from tavily.errors import (
+        InvalidAPIKeyError as _InvalidAPIKeyError,
+    )
+    from tavily.errors import (
+        MissingAPIKeyError as _MissingAPIKeyError,
+    )
+    from tavily.errors import (
+        TimeoutError as _TavilyTimeoutError,
+    )
+    from tavily.errors import (
+        UsageLimitExceededError as _UsageLimitExceededError,
     )
 
-    # Export TimeoutError as well for convenience
-    TimeoutError = TavilyTimeoutError  # type: ignore
+    AsyncTavilyClient: Any = _AsyncTavilyClient
+    BadRequestError = cast(type[Exception], _BadRequestError)
+    ForbiddenError = cast(type[Exception], _ForbiddenError)
+    InvalidAPIKeyError = cast(type[Exception], _InvalidAPIKeyError)
+    MissingAPIKeyError = cast(type[Exception], _MissingAPIKeyError)
+    TavilyTimeoutError = cast(type[Exception], _TavilyTimeoutError)
+    UsageLimitExceededError = cast(type[Exception], _UsageLimitExceededError)
 else:
-    # Silent fallback - no warning at import time (optional dependency)
-    # Warning is raised only when user actually tries to use TavilyProcessor
-    AsyncTavilyClient = None  # type: ignore
-    # Define exception classes as placeholders
-    BadRequestError = Exception  # type: ignore
-    ForbiddenError = Exception  # type: ignore
-    InvalidAPIKeyError = Exception  # type: ignore
-    MissingAPIKeyError = Exception  # type: ignore
-    TavilyTimeoutError = Exception  # type: ignore
-    TimeoutError = Exception  # type: ignore
-    UsageLimitExceededError = Exception  # type: ignore
+    AsyncTavilyClient = None
+    BadRequestError = _FallbackBadRequestError
+    ForbiddenError = _FallbackForbiddenError
+    InvalidAPIKeyError = _FallbackInvalidAPIKeyError
+    MissingAPIKeyError = _FallbackMissingAPIKeyError
+    TavilyTimeoutError = _FallbackTavilyTimeoutError
+    UsageLimitExceededError = _FallbackUsageLimitExceededError
+
+TimeoutError = TavilyTimeoutError
 
 
 def validate_url(url: str) -> bool:

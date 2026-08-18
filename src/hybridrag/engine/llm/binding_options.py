@@ -11,8 +11,8 @@ from argparse import ArgumentParser, Namespace
 from dataclasses import asdict, dataclass, field
 from typing import Any, ClassVar, get_args, get_origin
 
+from ..constants import DEFAULT_TEMPERATURE
 from ..utils import get_env_value
-from .constants import DEFAULT_TEMPERATURE
 
 
 def _resolve_optional_type(field_type: Any) -> Any:
@@ -585,6 +585,7 @@ if __name__ == "__main__":
     import sys
 
     import dotenv
+
     # from io import StringIO
 
     dotenv.load_dotenv(dotenv_path=".env", override=False)

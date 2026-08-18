@@ -5,6 +5,10 @@ from typing import NamedTuple
 
 import pytest
 
+from hybridrag.engine.exceptions import (
+    RetrievalCapabilityError,
+    RetrievalExecutionError,
+)
 from hybridrag.enhancements.graph_search import GraphTraversalConfig
 from hybridrag.enhancements.mix_mode_search import (
     MixModeConfig,
@@ -14,6 +18,69 @@ from hybridrag.enhancements.mix_mode_search import (
     mix_mode_search,
 )
 from hybridrag.enhancements.mongodb_hybrid_search import MongoDBHybridSearchConfig
+
+
+@pytest.mark.asyncio
+async def test_mix_mode_never_substitutes_manual_fusion(monkeypatch) -> None:
+    import sys
+
+    async def failed_native_fusion(*args, **kwargs):
+        raise RetrievalCapabilityError("rank fusion unavailable")
+
+    async def forbidden_manual_fusion(*args, **kwargs):
+        pytest.fail("manual fusion must not run after native fusion failure")
+
+    mix_module = sys.modules["hybridrag.enhancements.mix_mode_search"]
+    monkeypatch.setattr(
+        mix_module,
+        "hybrid_search_with_rank_fusion",
+        failed_native_fusion,
+    )
+    monkeypatch.setattr(
+        mix_module,
+        "manual_hybrid_search_with_rrf",
+        forbidden_manual_fusion,
+        raising=False,
+    )
+
+    with pytest.raises(RetrievalCapabilityError, match="rank fusion unavailable"):
+        await mix_mode_search(
+            db={"text_chunks": object()},
+            query="test query",
+            query_vector=[0.1, 0.2],
+            config=MixModeConfig(enable_graph_traversal=False),
+        )
+
+
+@pytest.mark.asyncio
+async def test_mix_mode_never_swallows_graph_failure(monkeypatch) -> None:
+    import sys
+
+    async def successful_native_fusion(*args, **kwargs):
+        return []
+
+    async def failed_graph_search(*args, **kwargs):
+        raise RuntimeError("graph lookup failed")
+
+    mix_module = sys.modules["hybridrag.enhancements.mix_mode_search"]
+    monkeypatch.setattr(
+        mix_module,
+        "hybrid_search_with_rank_fusion",
+        successful_native_fusion,
+    )
+    monkeypatch.setattr(
+        mix_module,
+        "expand_entities_via_graph",
+        failed_graph_search,
+    )
+
+    with pytest.raises(RetrievalExecutionError, match="graph traversal failed"):
+        await mix_mode_search(
+            db={"text_chunks": object()},
+            query="test query",
+            query_vector=[0.1, 0.2],
+            query_entities=["MongoDB"],
+        )
 
 
 class SeededMixModeDB(NamedTuple):

@@ -1,6 +1,6 @@
-# Recipe 01: Native Hybrid Search with $rankFusion
+# Recipe 01: Native Hybrid Search
 
-Master MongoDB's native hybrid search combining vector similarity and full-text keyword search.
+Use HybridRAG's canonical vector-and-text retrieval. Score fusion is the default; rank fusion is explicit.
 
 ## Overview
 
@@ -15,9 +15,9 @@ Hybrid search addresses a fundamental limitation: neither vector search nor keyw
 | "themrostat" (typo) | No match | Fuzzy finds it | Text helps |
 | Technical acronyms | May miss context | Exact match | Text helps |
 
-## MongoDB's Solution: $rankFusion
+## Native fusion
 
-MongoDB 8.0+ provides native `$rankFusion` that:
+MongoDB provides native score and rank fusion. HybridRAG executes the requested strategy without substituting another algorithm after an error. `$rankFusion`:
 1. Runs vector and text search pipelines in parallel
 2. Applies Reciprocal Rank Fusion algorithm
 3. Returns unified, relevance-ranked results
@@ -37,30 +37,14 @@ Where:
 ### Basic Hybrid Search
 
 ```python
-from hybridrag.enhancements import (
-    hybrid_search_with_rank_fusion,
-    MongoDBHybridSearchConfig,
-)
-
-# Configure hybrid search
-config = MongoDBHybridSearchConfig(
-    vector_index_name="vector_knn_index",
-    text_index_name="text_search_index",
-    vector_path="vector",
-    text_search_path="content",
-    vector_weight=0.6,  # Semantic similarity weight
-    text_weight=0.4,    # Keyword matching weight
-)
-
-# Run hybrid search
-results = await hybrid_search_with_rank_fusion(
-    collection=chunks_collection,
-    query_text="How do I configure authentication?",
-    query_vector=query_embedding,
-    top_k=10,
-    config=config,
+results = await rag.query_data(
+    "How do I configure authentication?",
+    mode="naive",
+    fusion_strategy="score",  # default; use "rank" for reciprocal-rank fusion
 )
 ```
+
+The lower-level enhancement helpers are pipeline utilities. Application retrieval should use `HybridRAG.query()`, `query_data()`, or `query_with_sources()` so filters, tenant constraints, cache identity, and typed errors share one contract.
 
 ### Full Pipeline Example
 
@@ -120,7 +104,7 @@ pipeline = [
     # Extract scores for analysis
     {
         "$addFields": {
-            "hybrid_score": {"$meta": "rankFusionScore"},
+            "hybrid_score": {"$meta": "score"},
             "score_details": {"$meta": "scoreDetails"}
         }
     },
@@ -128,7 +112,7 @@ pipeline = [
     {"$project": {"vector": 0}}  # Exclude large vector field
 ]
 
-results = await collection.aggregate(pipeline).to_list(length=None)
+results = await collection.aggregate(pipeline).to_list(length=1000)
 ```
 
 ### Extracting Per-Pipeline Scores
@@ -182,32 +166,6 @@ pipeline = [
 |----------|-----------|-----------|
 | General RAG | $rankFusion | Rank-based, position-aware |
 | Similar score ranges | $scoreFusion | Direct score combination |
-| M0/M2 tiers | Manual RRF | Native fusion not available |
-
-## Manual RRF Fallback
-
-For MongoDB Atlas free tier (M0) where $rankFusion is not available:
-
-```python
-from hybridrag.enhancements import (
-    manual_hybrid_search_with_rrf,
-    reciprocal_rank_fusion,
-)
-
-# Run both searches concurrently
-vector_results, text_results = await asyncio.gather(
-    vector_only_search(collection, query_vector, top_k * 2, config),
-    text_only_search(collection, query_text, top_k * 2, config),
-)
-
-# Merge with RRF
-merged_results = reciprocal_rank_fusion(
-    [vector_results, text_results],
-    k=60  # RRF constant
-)
-
-final_results = merged_results[:top_k]
-```
 
 ## Multi-Field Weighted Text Search
 
@@ -313,28 +271,24 @@ def calculate_num_candidates(top_k: int) -> int:
 ### 3. Error Handling
 
 ```python
-async def robust_hybrid_search(collection, query_text, query_vector, top_k):
-    """Hybrid search with graceful fallbacks."""
-    try:
-        # Try native $rankFusion first
-        return await hybrid_search_with_rank_fusion(
-            collection, query_text, query_vector, top_k
-        )
-    except Exception as e:
-        logger.warning(f"$rankFusion failed: {e}")
+from hybridrag.engine.exceptions import (
+    RetrievalCapabilityError,
+    RetrievalExecutionError,
+)
 
-        try:
-            # Fallback to manual RRF
-            return await manual_hybrid_search_with_rrf(
-                collection, query_text, query_vector, top_k
-            )
-        except Exception as e2:
-            logger.warning(f"Manual RRF failed: {e2}")
-
-            # Last resort: vector-only search
-            return await vector_only_search(
-                collection, query_vector, top_k
-            )
+try:
+    results = await rag.query_data(
+        query_text,
+        mode="naive",
+        fusion_strategy="score",
+    )
+except RetrievalCapabilityError:
+    # The requested operation is unavailable. Change deployment capability or
+    # make an explicit product decision; do not silently change algorithms.
+    raise
+except RetrievalExecutionError:
+    # The selected retrieval path failed and returned no substituted evidence.
+    raise
 ```
 
 ## Performance Considerations
