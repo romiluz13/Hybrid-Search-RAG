@@ -280,10 +280,10 @@ By default, the HybridRAG Server can be accessed without any authentication. We 
 
 ```
 HYBRIDRAG_API_KEY=your-secure-api-key-here
-WHITELIST_PATHS=/health,/api/*
+WHITELIST_PATHS=/health
 ```
 
-> Health check and Ollama emulation endpoints are excluded from API Key check by default. For security reasons, remove `/api/*` from `WHITELIST_PATHS` if the Ollama service is not required.
+> Only the health check is excluded from API-key checks by default. Do not whitelist `/api/*`: Ollama-compatible chat and generation endpoints perform retrieval and must authenticate.
 
 The API key is passed using the request header `X-API-Key`. Below is an example of accessing the HybridRAG Server via API:
 
@@ -566,8 +566,7 @@ EMBEDDING_BINDING_HOST=http://localhost:11434
 # TOKEN_EXPIRE_HOURS=48
 
 # HYBRIDRAG_API_KEY=your-secure-api-key-here-123
-# WHITELIST_PATHS=/api/*
-# WHITELIST_PATHS=/health,/api/*
+# WHITELIST_PATHS=/health
 
 ```
 

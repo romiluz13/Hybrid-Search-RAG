@@ -1,5 +1,7 @@
 # ADR 0006: MongoDB 8.2 Lexical Prefilters
 
+**Status:** Superseded by [ADR 0008](0008-latest-first-search-capabilities.md). Historical version and fallback statements below are not current product policy.
+
 **Status:** Accepted
 **Date:** 2026-01-21
 **Context:** MongoDB 8.2 (November 2025) introduced `$search.vectorSearch` operator

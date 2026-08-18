@@ -2,11 +2,12 @@
 """
 HybridRAG — 'See MongoDB value in 60 seconds' demo (NO API keys required).
 
-This showcase runs the REAL MongoDB 8.2+ native hybrid-search pipeline against
+This showcase runs the REAL MongoDB native hybrid-search pipeline against
 a local `mongodb/mongodb-atlas-local:preview` container — no Voyage key, no LLM
 key, no signup. It demonstrates the MongoDB value that HybridRAG is built on:
 
-    $rankFusion  →  merges  $vectorSearch  +  $search (lexical)  via RRF
+    $scoreFusion →  merges  $vectorSearch  +  $search with normalized scores
+    $rankFusion  →  offers rank-based fusion as an explicit alternative
     $graphLookup →  knowledge-graph traversal from a seed entity
 
 Embeddings are Voyage AI's job in production. Here we use small sample vectors
@@ -140,7 +141,7 @@ def wait_for_index_ready(coll: Any, index_name: str, timeout_s: int = 30) -> boo
                     if ix.get("status", ix.get("queryable")) in ("READY", True, "true"):
                         return True
                     # atlas-local reports queryable=True once ready
-                    if ix.get("queryable") is True:
+                    if ix.get("queryable"):
                         return True
         except Exception:
             pass
@@ -246,7 +247,7 @@ def run_lexical_search(db: Any) -> list[dict[str, Any]]:
 
 
 def run_rank_fusion(db: Any) -> list[dict[str, Any]]:
-    """The MongoDB 8.0+ native hybrid search: $rankFusion of vector + lexical.
+    """Native rank-based hybrid search: $rankFusion of vector + lexical.
 
     Uses Reciprocal Rank Fusion (RRF) with configurable weights. The fused score
     is retrieved via `$meta: "score"` (the documented keyword for $rankFusion).
@@ -290,6 +291,57 @@ def run_rank_fusion(db: Any) -> list[dict[str, Any]]:
                 "score": {"$meta": "score"},
             }
         },
+        {"$project": {"_id": 1, "content": 1, "topic": 1, "score": 1}},
+    ]
+    return list(db[CHUNKS].aggregate(pipeline))
+
+
+def run_score_fusion(db: Any) -> list[dict[str, Any]]:
+    """Native score-based hybrid search: $scoreFusion of vector + lexical."""
+    pipeline = [
+        {
+            "$scoreFusion": {
+                "input": {
+                    "pipelines": {
+                        "vectorPipeline": [
+                            {
+                                "$vectorSearch": {
+                                    "index": "vector_index",
+                                    "path": "vector",
+                                    "queryVector": QUERY_VECTOR,
+                                    "numCandidates": 10,
+                                    "limit": 3,
+                                }
+                            },
+                        ],
+                        "textPipeline": [
+                            {
+                                "$search": {
+                                    "index": "text_index",
+                                    "text": {
+                                        "path": "content",
+                                        "query": "hybrid search rank fusion",
+                                    },
+                                }
+                            },
+                            {"$limit": 3},
+                        ],
+                    },
+                    "normalization": "sigmoid",
+                },
+                "combination": {
+                    "method": "expression",
+                    "expression": {
+                        "$sum": [
+                            {"$multiply": ["$$vectorPipeline", 0.6]},
+                            {"$multiply": ["$$textPipeline", 0.4]},
+                        ]
+                    },
+                },
+                "scoreDetails": True,
+            }
+        },
+        {"$addFields": {"score": {"$meta": "score"}}},
         {"$project": {"_id": 1, "content": 1, "topic": 1, "score": 1}},
     ]
     return list(db[CHUNKS].aggregate(pipeline))
@@ -421,10 +473,19 @@ def main() -> int:
     )
 
     show(
-        "$rankFusion — MongoDB 8.0+ native hybrid search (vector + lexical via weighted RRF)",
+        "$scoreFusion — native hybrid search (normalized vector + lexical scores)",
+        run_score_fusion(db),
+        lesson="This is the latest-first default. $scoreFusion runs BOTH pipelines "
+        "(vector + text), normalizes their scores, and combines them with explicit "
+        "weights in a SINGLE database operation — no app-side merging, no "
+        "Pinecone+Postgres glue. The fused `score` is MongoDB's own output.",
+    )
+
+    show(
+        "$rankFusion — explicit rank-based alternative (weighted RRF)",
         run_rank_fusion(db),
-        lesson="This is the headline. $rankFusion runs BOTH pipelines (vector + text) and "
-        "merges them with Reciprocal Rank Fusion in a SINGLE database operation — "
+        lesson="$rankFusion runs the same two evidence pipelines and merges their "
+        "positions with Reciprocal Rank Fusion in a SINGLE database operation — "
         "no app-side merging, no Pinecone+Postgres glue. Notice the result order "
         "blends semantic and lexical relevance, and the fused `score` is MongoDB's "
         "own RRF output. One MongoDB aggregation, one unified result set. This is "

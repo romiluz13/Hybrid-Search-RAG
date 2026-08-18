@@ -6,6 +6,8 @@ ranking quality is asserted in ``tests/e2e_real_test.py`` with real providers an
 realistic seeded data. This file focuses on deterministic wrapper/API behavior.
 """
 
+import asyncio
+
 import pytest
 
 
@@ -17,20 +19,24 @@ async def test_ingest_and_query_returns_context(rag, test_documents):
     for doc in test_documents:
         await rag.insert(doc["content"])
 
-    result = await rag.query_data(
-        query="What is MongoDB Atlas?",
-        mode="mix",
-        top_k=5,
-    )
+    for _ in range(20):
+        result = await rag.query_data(
+            query="What is MongoDB Atlas?",
+            mode="mix",
+            top_k=5,
+        )
+        if result["metadata"].get("failure_reason") != "no_results":
+            break
+        await asyncio.sleep(0.5)
     context = result["context"]
 
+    assert result["metadata"].get("failure_reason") != "no_results"
     assert isinstance(context, str), "Should return retrieved context"
     assert len(context) > 0, "Context should not be empty"
     assert isinstance(result["metadata"], dict), "Should expose retrieval metadata"
-    assert (
-        "search_types" in result["metadata"]
-        or result["metadata"].get("failure_reason") == "no_results"
-    ), "Should expose retrieval diagnostics or an explicit no-results reason"
+    assert result["metadata"]["query_mode"] == "mix"
+    assert result["metadata"]["fallback_used"] is False
+    assert result["metadata"]["processing_info"]["final_chunks_count"] > 0
 
 
 @pytest.mark.integration

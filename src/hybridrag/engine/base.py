@@ -14,6 +14,8 @@ from typing import (
 
 from dotenv import load_dotenv
 
+from hybridrag.enhancements.filters import FilterConfig, RetrievalSecurityContext
+
 from .constants import (
     DEFAULT_CHUNK_TOP_K,
     DEFAULT_HISTORY_TURNS,
@@ -34,6 +36,14 @@ from .utils import EmbeddingFunc
 # allows to use different .env file for each hybridrag instance
 # the OS environment variables take precedence over the .env file
 load_dotenv(dotenv_path=".env", override=False)
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an integer environment setting with a safe default."""
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
 
 
 class OllamaServerInfos:
@@ -104,27 +114,23 @@ class QueryParam:
     stream: bool = False
     """If True, enables streaming output for real-time responses."""
 
-    top_k: int = int(os.getenv("TOP_K", str(DEFAULT_TOP_K)))
+    top_k: int = _env_int("TOP_K", DEFAULT_TOP_K)
     """Number of top items to retrieve. Represents entities in 'local' mode and relationships in 'global' mode."""
 
-    chunk_top_k: int = int(os.getenv("CHUNK_TOP_K", str(DEFAULT_CHUNK_TOP_K)))
+    chunk_top_k: int = _env_int("CHUNK_TOP_K", DEFAULT_CHUNK_TOP_K)
     """Number of text chunks to retrieve initially from vector search and keep after reranking.
     If None, defaults to top_k value.
     """
 
-    max_entity_tokens: int = int(
-        os.getenv("MAX_ENTITY_TOKENS", str(DEFAULT_MAX_ENTITY_TOKENS))
-    )
+    max_entity_tokens: int = _env_int("MAX_ENTITY_TOKENS", DEFAULT_MAX_ENTITY_TOKENS)
     """Maximum number of tokens allocated for entity context in unified token control system."""
 
-    max_relation_tokens: int = int(
-        os.getenv("MAX_RELATION_TOKENS", str(DEFAULT_MAX_RELATION_TOKENS))
+    max_relation_tokens: int = _env_int(
+        "MAX_RELATION_TOKENS", DEFAULT_MAX_RELATION_TOKENS
     )
     """Maximum number of tokens allocated for relationship context in unified token control system."""
 
-    max_total_tokens: int = int(
-        os.getenv("MAX_TOTAL_TOKENS", str(DEFAULT_MAX_TOTAL_TOKENS))
-    )
+    max_total_tokens: int = _env_int("MAX_TOTAL_TOKENS", DEFAULT_MAX_TOTAL_TOKENS)
     """Maximum total tokens budget for the entire query context (entities + relations + chunks + system prompt)."""
 
     hl_keywords: list[str] = field(default_factory=list)
@@ -139,7 +145,7 @@ class QueryParam:
     Format: [{"role": "user/assistant", "content": "message"}].
     """
 
-    history_turns: int = int(os.getenv("HISTORY_TURNS", str(DEFAULT_HISTORY_TURNS)))
+    history_turns: int = _env_int("HISTORY_TURNS", DEFAULT_HISTORY_TURNS)
     """Number of conversation turns for context (all messages are sent to LLM by default)."""
 
     model_func: Callable[..., object] | None = None
@@ -164,6 +170,26 @@ class QueryParam:
     This parameter controls whether the API response includes a references field
     containing citation information for the retrieved content.
     """
+
+    filter_config: FilterConfig | None = field(default=None, repr=False)
+    """Backend-neutral metadata filter for supported retrieval modes."""
+
+    fusion_strategy: Literal["rank", "score"] | None = None
+    """Optional hybrid fusion strategy; omission selects score fusion."""
+
+    vector_search_mode: Literal["ann", "exact"] = "ann"
+    """Use approximate or exact vector execution inside hybrid retrieval."""
+
+    rerank_strategy: Literal["native", "external"] = "native"
+    """Select MongoDB native reranking or the configured external provider."""
+
+    native_rerank_model: Literal[
+        "rerank-2.5", "rerank-2.5-lite", "rerank-2", "rerank-2-lite"
+    ] = "rerank-2.5"
+    """Voyage AI model used by MongoDB native reranking."""
+
+    security_context: RetrievalSecurityContext | None = field(default=None, repr=False)
+    """Server-owned constraints injected by the configured engine."""
 
 
 @dataclass
@@ -219,7 +245,7 @@ class BaseVectorStorage(StorageNameSpace, ABC):
 
     @abstractmethod
     async def query(
-        self, query: str, top_k: int, query_embedding: list[float] = None
+        self, query: str, top_k: int, query_embedding: list[float] | None = None
     ) -> list[dict[str, Any]]:
         """Query the vector storage and retrieve top_k results.
 
@@ -712,10 +738,7 @@ class DocProcessingStatus:
         """
         # Apply status conversion logic
         if self.multimodal_processed is not None:
-            if (
-                self.multimodal_processed is False
-                and self.status == DocStatus.PROCESSED
-            ):
+            if not self.multimodal_processed and self.status == DocStatus.PROCESSED:
                 self.status = DocStatus.PREPROCESSED
 
 

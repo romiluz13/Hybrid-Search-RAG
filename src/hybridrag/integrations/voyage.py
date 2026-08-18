@@ -412,4 +412,10 @@ def create_rerank_func(
         logger.info(f"[RERANK_FUNC] Returning {len(result)} results")
         return result
 
+    rerank_func.cache_identity = {  # type: ignore[attr-defined]
+        "provider": "voyage",
+        "model": model,
+        "instructions": default_instructions,
+        "base_url": base_url,
+    }
     return rerank_func

@@ -108,7 +108,7 @@ def build_lexical_prefilters(config: LexicalPrefilterConfig) -> dict[str, Any]:
     """
     Build filter object for $search.vectorSearch using Atlas Search operators.
 
-    IMPORTANT: This is for MongoDB 8.2+ $search.vectorSearch lexical prefilters.
+    IMPORTANT: This is for $search.vectorSearch lexical prefilters.
     These use Atlas Search operators (text, fuzzy, phrase, wildcard, geo).
 
     Args:
@@ -135,7 +135,7 @@ def build_lexical_prefilters(config: LexicalPrefilterConfig) -> dict[str, Any]:
         path = text_filter.get("path")
         query = text_filter.get("query")
         if not path or not query:
-            continue  # Skip invalid filter (missing required fields)
+            raise ValueError("text filter requires non-empty path and query")
         clause: dict[str, Any] = {
             "text": {
                 "path": path,
@@ -153,7 +153,7 @@ def build_lexical_prefilters(config: LexicalPrefilterConfig) -> dict[str, Any]:
         path = fuzzy_filter.get("path")
         query = fuzzy_filter.get("query")
         if not path or not query:
-            continue  # Skip invalid filter (missing required fields)
+            raise ValueError("fuzzy filter requires non-empty path and query")
         clause = {
             "text": {
                 "path": path,
@@ -172,7 +172,7 @@ def build_lexical_prefilters(config: LexicalPrefilterConfig) -> dict[str, Any]:
         path = phrase_filter.get("path")
         query = phrase_filter.get("query")
         if not path or not query:
-            continue  # Skip invalid filter (missing required fields)
+            raise ValueError("phrase filter requires non-empty path and query")
         clause = {
             "phrase": {
                 "path": path,
@@ -188,7 +188,7 @@ def build_lexical_prefilters(config: LexicalPrefilterConfig) -> dict[str, Any]:
         path = wildcard_filter.get("path")
         query = wildcard_filter.get("query")
         if not path or not query:
-            continue  # Skip invalid filter (missing required fields)
+            raise ValueError("wildcard filter requires non-empty path and query")
         clause = {
             "wildcard": {
                 "path": path,
@@ -205,26 +205,27 @@ def build_lexical_prefilters(config: LexicalPrefilterConfig) -> dict[str, Any]:
         for op in ["gte", "gt", "lte", "lt"]:
             if op in range_spec:
                 range_clause[op] = range_spec[op]
+        if len(range_clause) == 1:
+            raise ValueError(
+                f"range filter for field '{path}' requires at least one bound"
+            )
         filter_clauses.append({"range": range_clause})
 
-    # Geo filters (L10: use relation field to select correct operator)
-    _GEO_RELATION_OPERATORS = {
-        "within": "geoWithin",
-        "intersects": "geoIntersects",
-        "contains": "geoWithin",  # Atlas Search maps "contains" to geoWithin
-        "disjoint": "geoWithin",  # No native disjoint; closest operator
-    }
+    # Geo filters
+    geo_relations = {"contains", "disjoint", "intersects", "within"}
     for geo_filter in config.geo_filters:
         path = geo_filter.get("path")
         geometry = geo_filter.get("geometry")
         if not path or not geometry:
-            continue  # Skip invalid filter (missing required fields)
+            raise ValueError("geo filter requires non-empty path and geometry")
         relation = geo_filter.get("relation", "within")
-        geo_operator = _GEO_RELATION_OPERATORS.get(relation, "geoWithin")
+        if relation not in geo_relations:
+            raise ValueError(f"unsupported geo relation: {relation}")
         filter_clauses.append(
             {
-                geo_operator: {
+                "geoShape": {
                     "path": path,
+                    "relation": relation,
                     "geometry": geometry,
                 }
             }
@@ -234,15 +235,18 @@ def build_lexical_prefilters(config: LexicalPrefilterConfig) -> dict[str, Any]:
     if config.query_string_filter:
         default_path = config.query_string_filter.get("defaultPath")
         query = config.query_string_filter.get("query")
-        if default_path and query:  # Only add if both required fields present
-            filter_clauses.append(
-                {
-                    "queryString": {
-                        "defaultPath": default_path,
-                        "query": query,
-                    }
-                }
+        if not default_path or not query:
+            raise ValueError(
+                "queryString filter requires non-empty defaultPath and query"
             )
+        filter_clauses.append(
+            {
+                "queryString": {
+                    "defaultPath": default_path,
+                    "query": query,
+                }
+            }
+        )
 
     # Equality filters (using equals operator)
     for path, value in config.equality_filters.items():

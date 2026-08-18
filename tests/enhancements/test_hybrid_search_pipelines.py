@@ -11,6 +11,13 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from pymongo.errors import OperationFailure
+
+from hybridrag.engine.exceptions import (
+    RetrievalCapabilityError,
+    RetrievalExecutionError,
+    RetrievalValidationError,
+)
 
 
 class _FakeCursor:
@@ -30,6 +37,184 @@ def _make_mock_collection():
     # aggregate returns a coroutine that resolves to a cursor
     collection.aggregate = AsyncMock(return_value=fake_cursor)
     return collection, fake_cursor
+
+
+def test_ann_candidates_respect_server_maximum():
+    from hybridrag.enhancements.mongodb_hybrid_search import (
+        MongoDBHybridSearchConfig,
+        calculate_num_candidates,
+    )
+
+    assert calculate_num_candidates(600) == 10_000
+    with pytest.raises(RetrievalValidationError, match="numCandidates"):
+        MongoDBHybridSearchConfig(vector_num_candidates=10_001)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "search_name",
+    ["hybrid_search_with_rank_fusion", "hybrid_search_with_score_fusion"],
+)
+async def test_native_hybrid_search_never_silently_changes_strategy(search_name):
+    from hybridrag.enhancements import mongodb_hybrid_search
+
+    collection, _ = _make_mock_collection()
+    collection.aggregate.side_effect = OperationFailure(
+        "Unrecognized pipeline stage name",
+        code=40324,
+    )
+    search = getattr(mongodb_hybrid_search, search_name)
+
+    with pytest.raises(RetrievalCapabilityError, match="fusion is unavailable"):
+        await search(
+            collection=collection,
+            query_text="test query",
+            query_vector=[0.1] * 1024,
+            top_k=5,
+        )
+
+    assert collection.aggregate.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "search_name",
+    ["hybrid_search_with_rank_fusion", "hybrid_search_with_score_fusion"],
+)
+async def test_native_hybrid_search_does_not_mislabel_execution_failure(
+    search_name,
+):
+    from hybridrag.enhancements import mongodb_hybrid_search
+
+    collection, _ = _make_mock_collection()
+    collection.aggregate.side_effect = OperationFailure("invalid pipeline", code=9)
+    search = getattr(mongodb_hybrid_search, search_name)
+
+    with pytest.raises(RetrievalExecutionError, match="fusion failed"):
+        await search(
+            collection=collection,
+            query_text="test query",
+            query_vector=[0.1] * 1024,
+            top_k=5,
+        )
+
+
+@pytest.mark.asyncio
+async def test_filtered_text_search_never_retries_without_filter():
+    from hybridrag.enhancements.filters import AtlasSearchFilterConfig
+    from hybridrag.enhancements.mongodb_hybrid_search import text_only_search
+
+    collection, _ = _make_mock_collection()
+    collection.aggregate.side_effect = OperationFailure("text search failed")
+
+    with pytest.raises(RetrievalExecutionError, match="text search failed"):
+        await text_only_search(
+            collection=collection,
+            query_text="test query",
+            top_k=5,
+            filter_config=AtlasSearchFilterConfig(
+                equality_filters={"metadata.tenant": "tenant-a"}
+            ),
+        )
+
+    assert collection.aggregate.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "search_name",
+    ["vector_only_search", "vector_search_with_lexical_prefilters"],
+)
+async def test_exported_vector_search_never_swallows_or_substitutes_failure(
+    search_name,
+):
+    from hybridrag.enhancements import mongodb_hybrid_search
+
+    collection, _ = _make_mock_collection()
+    collection.aggregate.side_effect = OperationFailure("vector search failed")
+    search = getattr(mongodb_hybrid_search, search_name)
+
+    with pytest.raises(RetrievalExecutionError, match="vector search failed"):
+        await search(
+            collection=collection,
+            query_vector=[0.1] * 1024,
+            top_k=5,
+        )
+
+    assert collection.aggregate.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_hybrid_search_never_returns_a_single_surviving_branch(
+    monkeypatch,
+):
+    from hybridrag.enhancements import mongodb_hybrid_search
+
+    async def failed_vector_search(*args, **kwargs):
+        raise RetrievalExecutionError("vector branch failed")
+
+    async def successful_text_search(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(
+        mongodb_hybrid_search, "vector_only_search", failed_vector_search
+    )
+    monkeypatch.setattr(
+        mongodb_hybrid_search, "text_only_search", successful_text_search
+    )
+
+    with pytest.raises(RetrievalExecutionError, match="vector branch failed"):
+        await mongodb_hybrid_search.manual_hybrid_search_with_rrf(
+            collection=AsyncMock(),
+            query_text="test query",
+            query_vector=[0.1] * 1024,
+            top_k=5,
+        )
+
+
+@pytest.mark.asyncio
+async def test_legacy_fusion_rejects_independent_filter_models():
+    from hybridrag.enhancements.filters import AtlasSearchFilterConfig
+    from hybridrag.enhancements.mongodb_hybrid_search import (
+        hybrid_search_with_rank_fusion,
+    )
+
+    collection, _ = _make_mock_collection()
+
+    with pytest.raises(
+        RetrievalValidationError,
+        match="unified FilterConfig",
+    ):
+        await hybrid_search_with_rank_fusion(
+            collection=collection,
+            query_text="test query",
+            query_vector=[0.1] * 1024,
+            atlas_filter_config=AtlasSearchFilterConfig(
+                equality_filters={"metadata.tenant": "tenant-a"}
+            ),
+        )
+
+    collection.aggregate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_weighted_text_search_never_substitutes_simple_search():
+    from hybridrag.enhancements.mongodb_hybrid_search import (
+        MongoDBHybridSearchConfig,
+        multi_field_text_search,
+    )
+
+    collection, _ = _make_mock_collection()
+    collection.aggregate.side_effect = OperationFailure("weighted search failed")
+
+    with pytest.raises(RetrievalExecutionError, match="text search failed"):
+        await multi_field_text_search(
+            collection=collection,
+            query_text="test query",
+            config=MongoDBHybridSearchConfig(text_search_path_weights={"content": 1.0}),
+        )
+
+    assert collection.aggregate.await_count == 1
 
 
 class TestC5MixedProjection:
@@ -216,3 +401,31 @@ class TestC7ScoreFusionNormalization:
         # normalization must NOT be at the top level of $scoreFusion
         # (it belongs inside input, not as a sibling of input)
         # Note: normalization IS correct inside input per official docs
+
+    @pytest.mark.asyncio
+    async def test_weighted_score_fusion_uses_expression_sum(self):
+        from hybridrag.enhancements.mongodb_hybrid_search import (
+            MongoDBHybridSearchConfig,
+            hybrid_search_with_score_fusion,
+        )
+
+        collection, _ = _make_mock_collection()
+
+        await hybrid_search_with_score_fusion(
+            collection=collection,
+            query_text="test query",
+            query_vector=[0.1] * 1024,
+            config=MongoDBHybridSearchConfig(vector_weight=0.7, text_weight=0.3),
+        )
+
+        pipeline = collection.aggregate.call_args[0][0]
+        combination = pipeline[0]["$scoreFusion"]["combination"]
+        assert combination == {
+            "method": "expression",
+            "expression": {
+                "$sum": [
+                    {"$multiply": ["$$vector", 0.7]},
+                    {"$multiply": ["$$text", 0.3]},
+                ]
+            },
+        }

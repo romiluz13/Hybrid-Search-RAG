@@ -111,6 +111,9 @@ src/hybridrag.egg-info/
 src/mongodb_hybridrag.egg-info/
 
 _internal/
+.pi/
+.pi-subagents/
+.scratch/
 
 # Glean Audit (investigation/analysis reports)
 glean-audit/

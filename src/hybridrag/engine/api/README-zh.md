@@ -270,10 +270,10 @@ Open WebUI 使用 LLM 来执行会话标题和会话关键词生成任务。因�
 
 ```
 HYBRIDRAG_API_KEY=your-secure-api-key-here
-WHITELIST_PATHS=/health,/api/*
+WHITELIST_PATHS=/health
 ```
 
-> 健康检查和 Ollama 模拟端点默认不进行 API 密钥检查。为了安全原因，如果不需要提供Ollama服务，应该把`/api/*`从WHITELIST_PATHS中移除。
+> 默认只有健康检查不进行 API 密钥检查。不要将 `/api/*` 加入白名单：兼容 Ollama 的聊天和生成端点会执行检索，因此必须经过身份验证。
 
 API Key使用的请求头是 `X-API-Key` 。以下是使用API访问HybridRAG Server的一个例子：
 
@@ -502,8 +502,7 @@ EMBEDDING_BINDING_HOST=http://localhost:11434
 # TOKEN_EXPIRE_HOURS=48
 
 # HYBRIDRAG_API_KEY=your-secure-api-key-here-123
-# WHITELIST_PATHS=/api/*
-# WHITELIST_PATHS=/health,/api/*
+# WHITELIST_PATHS=/health
 ```
 
 #### 使用 ollama 默认本地服务器作为 llm 和嵌入后端运行 HybridRAG 服务器

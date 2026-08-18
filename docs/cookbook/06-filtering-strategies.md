@@ -402,7 +402,7 @@ pipeline = [
 | Text search + metadata | Atlas Search Filters | Compound queries |
 | Fuzzy + vector search | Lexical Prefilters | Advanced text analysis |
 | Geo + vector search | Lexical Prefilters | Only option for geo |
-| Hybrid search + filters | Both | Vector and Atlas filters |
+| Hybrid search + filters | Public `FilterConfig` | One evidence boundary |
 | Pattern matching | Lexical Prefilters | Wildcard support |
 | Multi-language typos | Lexical Prefilters | Fuzzy with control |
 
@@ -416,47 +416,35 @@ pipeline = [
 
 ## Using Multiple Filter Systems Together
 
-### Hybrid Search with Both Filters
+### Hybrid Search with One Shared Filter
 
 ```python
-from hybridrag.enhancements import (
-    hybrid_search_with_rank_fusion,
-    MongoDBHybridSearchConfig,
-)
 from hybridrag.enhancements.filters import (
-    VectorSearchFilterConfig,
-    AtlasSearchFilterConfig,
-    LexicalPrefilterConfig,
+    FilterConfig,
+    FilterPredicate,
 )
 
-# Vector search uses VectorSearchFilterConfig OR LexicalPrefilterConfig
-vector_config = VectorSearchFilterConfig(
-    equality_filters={"metadata.category": "docs"}
-)
-
-# OR for MongoDB 8.2+:
-lexical_config = LexicalPrefilterConfig(
-    fuzzy_filters=[{"path": "title", "query": "mongodb", "maxEdits": 2}]
-)
-
-# Atlas search uses AtlasSearchFilterConfig
-atlas_config = AtlasSearchFilterConfig(
-    equality_filters={"metadata.source": "official"},
-    range_filters={"metadata.date": {"gte": "2024-01-01"}}
-)
-
-# Hybrid search with appropriate filters
-results = await hybrid_search_with_rank_fusion(
-    collection=chunks_collection,
-    query_text="vector search",
-    query_vector=query_embedding,
+results = await rag.query_data(
+    "vector search",
+    mode="naive",
     top_k=10,
-    config=MongoDBHybridSearchConfig(use_lexical_prefilters=True),
-    vector_filter_config=vector_config,    # For vector pipeline
-    atlas_filter_config=atlas_config,      # For text pipeline
-    lexical_filter_config=lexical_config,  # For lexical prefilters
+    fusion_strategy="score",
+    filter_config=FilterConfig(
+        predicates=[
+            FilterPredicate(
+                field="metadata.category", operator="eq", value="docs"
+            ),
+            FilterPredicate(
+                field="metadata.source", operator="eq", value="official"
+            ),
+        ]
+    ),
 )
 ```
+
+HybridRAG compiles the same public filter into the vector and text branches.
+The legacy hybrid helper rejects independent branch filters so a failed branch
+cannot broaden the evidence boundary.
 
 ## Common Mistakes
 
@@ -493,22 +481,13 @@ atlas_config = AtlasSearchFilterConfig(
 }
 ```
 
-### 3. Using Lexical Prefilters on Old MongoDB
+### 3. Handling Lexical-Prefilter Capability Errors
 
 ```python
-# WRONG: Lexical prefilters on MongoDB < 8.2
-{
-    "$search": {
-        "vectorSearch": {...}  # Not available before 8.2
-    }
-}
-
-# CORRECT: Use $vectorSearch with MQL filters
-{
-    "$vectorSearch": {
-        "filter": {"category": {"$eq": "docs"}}  # Works on all versions
-    }
-}
+# Execute the requested capability. HybridRAG raises a typed capability error
+# if the deployment does not support it; it never silently substitutes a
+# different filter language or evidence boundary.
+await vector_search_with_lexical_prefilters(...)
 ```
 
 ## Summary

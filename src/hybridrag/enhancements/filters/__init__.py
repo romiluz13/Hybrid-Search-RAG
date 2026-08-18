@@ -26,12 +26,29 @@ from .lexical_prefilters import (
     build_search_vector_search_stage,
 )
 from .vector_search_filters import (
+    FilterConfig,
+    FilterPredicate,
+    RetrievalSecurityContext,
     VectorSearchFilterConfig,
     build_vector_search_filters,
     build_vector_search_stage,
+    compile_filter_to_atlas,
+    compile_filter_to_mql,
+    compile_retrieval_filter_to_atlas,
+    compile_retrieval_filter_to_mql,
+    validate_filter_config_for_mappings,
 )
 
 __all__ = [
+    # Backend-neutral public filters
+    "FilterConfig",
+    "FilterPredicate",
+    "RetrievalSecurityContext",
+    "compile_filter_to_atlas",
+    "compile_filter_to_mql",
+    "compile_retrieval_filter_to_atlas",
+    "compile_retrieval_filter_to_mql",
+    "validate_filter_config_for_mappings",
     # Vector Search Filters (MQL operators)
     "build_vector_search_filters",
     "build_vector_search_stage",

@@ -8,8 +8,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from ...utils import logger
 from ..utils_api import get_combined_auth_dependency
-from .utils import logger
 
 router = APIRouter(tags=["graph"])
 

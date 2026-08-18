@@ -129,6 +129,57 @@ class ChunkTokenLimitExceededError(ValueError):
         self.chunk_preview = truncated_preview
 
 
+class RetrievalError(RuntimeError):
+    """Base error for retrieval requests that did not produce a valid result."""
+
+
+class RetrievalValidationError(RetrievalError, ValueError):
+    """Raised when retrieval options cannot preserve the requested semantics."""
+
+
+class RetrievalCapabilityError(RetrievalError):
+    """Raised when a requested retrieval capability is unavailable or disabled."""
+
+
+class RetrievalExecutionError(RetrievalError):
+    """Raised when the selected retrieval strategy fails during execution."""
+
+
+def is_retrieval_capability_error(error: Exception) -> bool:
+    """Return whether MongoDB explicitly reported an unsupported capability."""
+    if getattr(error, "code", None) in {115, 40324}:
+        return True
+
+    details = getattr(error, "details", None)
+    code_name = details.get("codeName") if isinstance(details, dict) else None
+    if code_name in {"CommandNotSupported", "UnrecognizedPipelineStage"}:
+        return True
+
+    message = str(error).lower()
+    return any(
+        phrase in message
+        for phrase in (
+            "command not supported",
+            "is not supported",
+            "is not enabled",
+            "unrecognized pipeline stage",
+            "unknown pipeline stage",
+        )
+    )
+
+
+class SearchIndexLifecycleError(RuntimeError):
+    """Raised when a search index cannot reach a usable state."""
+
+
+class SearchIndexApplyError(SearchIndexLifecycleError):
+    """Raised after a multi-index apply partially succeeds."""
+
+    def __init__(self, message: str, applied_plans: list[dict]) -> None:
+        super().__init__(message)
+        self.applied_plans = applied_plans
+
+
 class QdrantMigrationError(Exception):
     """Raised when Qdrant data migration from legacy collections fails."""
 

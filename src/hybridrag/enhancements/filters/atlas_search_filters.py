@@ -28,12 +28,9 @@ Example $search with filters in compound query:
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
-
-logger = logging.getLogger("hybridrag.filters.atlas_search")
 
 
 @dataclass
@@ -106,11 +103,9 @@ def build_atlas_search_filters(config: AtlasSearchFilterConfig) -> list[dict[str
     # In-list filters using compound.should with multiple equals
     for field_name, values in config.in_filters.items():
         if not values:
-            # [L11] Warn and skip empty filter values instead of silently dropping
-            logger.warning(
-                f"[ATLAS_SEARCH_FILTER] Empty in_filter values for field '{field_name}' -- skipping"
+            raise ValueError(
+                f"in_filter values for field '{field_name}' must not be empty"
             )
-            continue
         if len(values) == 1:
             # Single value - use simple equals
             filters.append({"equals": {"path": field_name, "value": values[0]}})
@@ -134,6 +129,10 @@ def build_atlas_search_filters(config: AtlasSearchFilterConfig) -> list[dict[str
             range_filter["gt"] = range_spec["gt"]
         if "lt" in range_spec:
             range_filter["lt"] = range_spec["lt"]
+        if len(range_filter) == 1:
+            raise ValueError(
+                f"range filter for field '{field_name}' requires at least one bound"
+            )
         filters.append({"range": range_filter})
 
     # Exists filters

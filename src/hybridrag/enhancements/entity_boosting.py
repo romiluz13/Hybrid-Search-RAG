@@ -241,4 +241,8 @@ def create_boosted_rerank_func(
         """Rerank function with entity boosting."""
         return await reranker(query, documents, top_n, relevant_entity_ids, **kwargs)
 
+    boosted_rerank_func.cache_identity = {  # type: ignore[attr-defined]
+        "base": getattr(base_rerank_func, "cache_identity", None),
+        "entity_boost_weight": boost_weight,
+    }
     return boosted_rerank_func

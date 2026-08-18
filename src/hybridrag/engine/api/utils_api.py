@@ -11,13 +11,20 @@ from fastapi import HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from starlette.status import HTTP_403_FORBIDDEN
 
-from . import __version__ as core_version
-from .api import __api_version__ as api_version
-from .auth import auth_handler
-from .config import get_env_value, global_args, ollama_server_infos
-from .constants import (
+from hybridrag import __version__ as core_version
+from hybridrag.engine.security import (
+    api_key_security_context,
+    principal_security_context,
+    reset_request_security_context,
+    set_request_security_context,
+)
+
+from ..constants import (
     DEFAULT_FORCE_LLM_SUMMARY_ON_MERGE,
 )
+from . import __api_version__ as api_version
+from .auth import auth_handler
+from .config import get_env_value, global_args, ollama_server_infos
 
 
 def check_env_file():
@@ -89,9 +96,9 @@ def get_combined_auth_dependency(api_key: str | None = None):
     async def combined_dependency(
         request: Request,
         token: str = Security(oauth2_scheme),
-        api_key_header_value: str | None = None
-        if api_key_header is None
-        else Security(api_key_header),
+        api_key_header_value: str | None = (
+            None if api_key_header is None else Security(api_key_header)
+        ),
     ):
         # 1. Check if path is in whitelist
         path = request.url.path
@@ -99,7 +106,19 @@ def get_combined_auth_dependency(api_key: str | None = None):
             if (is_prefix and path.startswith(pattern)) or (
                 not is_prefix and path == pattern
             ):
-                return  # Whitelist path, allow access
+                # scar: 2026-08-19 — /api/* exposed unscoped Ollama retrieval.
+                if os.environ.get("HYBRIDRAG_TENANT_FIELD") and (
+                    path == "/query"
+                    or path.startswith("/query/")
+                    or path.startswith("/api/")
+                ):
+                    break
+                token_handle = set_request_security_context(None)
+                try:
+                    yield
+                finally:
+                    reset_request_security_context(token_handle)
+                return
 
         # 2. Validate token first if provided in the request (Ensure 401 error if token is invalid)
         if token:
@@ -107,9 +126,33 @@ def get_combined_auth_dependency(api_key: str | None = None):
                 token_info = auth_handler.validate_token(token)
                 # Accept guest token if no auth is configured
                 if not auth_configured and token_info.get("role") == "guest":
+                    try:
+                        security_context = principal_security_context(token_info)
+                    except ValueError as exc:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=str(exc),
+                        ) from None
+                    token_handle = set_request_security_context(security_context)
+                    try:
+                        yield
+                    finally:
+                        reset_request_security_context(token_handle)
                     return
                 # Accept non-guest token if auth is configured
                 if auth_configured and token_info.get("role") != "guest":
+                    try:
+                        security_context = principal_security_context(token_info)
+                    except ValueError as exc:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=str(exc),
+                        ) from None
+                    token_handle = set_request_security_context(security_context)
+                    try:
+                        yield
+                    finally:
+                        reset_request_security_context(token_handle)
                     return
 
                 # Token validation failed, immediately return 401 error
@@ -125,6 +168,18 @@ def get_combined_auth_dependency(api_key: str | None = None):
 
         # 3. Acept all request if no API protection needed
         if not auth_configured and not api_key_configured:
+            try:
+                security_context = api_key_security_context(None)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=str(exc),
+                ) from None
+            token_handle = set_request_security_context(security_context)
+            try:
+                yield
+            finally:
+                reset_request_security_context(token_handle)
             return
 
         # 4. Validate API key if provided and API-Key authentication is configured
@@ -133,7 +188,19 @@ def get_combined_auth_dependency(api_key: str | None = None):
             and api_key_header_value
             and api_key_header_value == api_key
         ):
-            return  # API key validation successful
+            try:
+                security_context = api_key_security_context(api_key_header_value)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=str(exc),
+                ) from None
+            token_handle = set_request_security_context(security_context)
+            try:
+                yield
+            finally:
+                reset_request_security_context(token_handle)
+            return
 
         ### Authentication failed ####
 

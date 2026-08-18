@@ -4,7 +4,7 @@ HybridRAG supports multiple query modes, each optimized for different use cases.
 
 ## Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    QUERY MODES                              │
 ├─────────────────────────────────────────────────────────────┤
@@ -13,7 +13,7 @@ HybridRAG supports multiple query modes, each optimized for different use cases.
 │  local    → Entity-focused retrieval                        │
 │  global   → Community summaries                              │
 │  hybrid   → Local + Global combined                          │
-│  naive    → Vector search only                               │
+│  naive    → Vector + keyword fusion, without KG              │
 │  bypass   → Skip retrieval, direct LLM                       │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
@@ -34,6 +34,7 @@ result = await rag.query_with_memory(
 ```
 
 **How it works:**
+
 1. **Vector Search**: Semantic similarity search using embeddings
 2. **Keyword Search**: Text matching using MongoDB text indexes
 3. **Knowledge Graph**: Entity traversal via `$graphLookup`
@@ -42,6 +43,7 @@ result = await rag.query_with_memory(
 6. **Entity Boosting**: Chunks with relevant entities get boosted
 
 **Use when:**
+
 - You want the best overall results
 - Query involves both concepts and specific entities
 - You need comprehensive retrieval
@@ -61,12 +63,14 @@ result = await rag.query_with_memory(
 ```
 
 **How it works:**
+
 1. **Entity Extraction**: Extracts entities from query
 2. **Graph Traversal**: Finds related entities via relationships
 3. **Entity Boosting**: Retrieves chunks mentioning these entities
 4. **Vector Search**: Semantic search for context around entities
 
 **Use when:**
+
 - Query mentions specific entities (people, places, concepts)
 - You need to understand relationships
 - Fact-based questions
@@ -86,11 +90,13 @@ result = await rag.query_with_memory(
 ```
 
 **How it works:**
+
 1. **Community Detection**: Finds entity communities in knowledge graph
 2. **Summary Retrieval**: Gets pre-computed community summaries
 3. **Vector Search**: Semantic search for relevant summaries
 
 **Use when:**
+
 - You need high-level understanding
 - Query is broad/conceptual
 - You want summarized information
@@ -110,20 +116,22 @@ result = await rag.query_with_memory(
 ```
 
 **How it works:**
+
 1. Runs both `local` and `global` modes
 2. Merges results with deduplication
 3. Reranks combined results
 
 **Use when:**
+
 - You need both specific facts and overview
 - Query requires comprehensive answer
 - You want best of both worlds
 
 ## Mode: `naive`
 
-**Best for**: Simple similarity search, testing
+**Best for**: Document-focused retrieval, metadata filtering, testing
 
-Pure vector search without knowledge graph or keyword search.
+Combines vector and keyword chunk retrieval without knowledge-graph context. Score fusion is the default; callers can explicitly select rank fusion.
 
 ```python
 result = await rag.query_with_memory(
@@ -134,15 +142,18 @@ result = await rag.query_with_memory(
 ```
 
 **How it works:**
-1. **Vector Search Only**: Semantic similarity using embeddings
-2. No knowledge graph traversal
-3. No keyword matching
-4. No reranking (optional)
+
+1. **Vector Search**: Semantic similarity using embeddings
+2. **Keyword Search**: Exact and lexical matching over chunk content
+3. **Fusion**: Rank fusion by default, optional score fusion on supported servers
+4. **No KG Context**: Entity and relationship traversal are skipped
+5. **Optional Filtering/Reranking**: Public metadata filters constrain both retrieval branches
 
 **Use when:**
-- Testing embedding quality
-- Simple similarity needs
-- Baseline comparison
+
+- Metadata filters must bound every retrieved chunk
+- You want document retrieval without graph context
+- Comparing vector/keyword retrieval strategies
 
 ## Mode: `bypass`
 
@@ -159,11 +170,13 @@ result = await rag.query_with_memory(
 ```
 
 **How it works:**
+
 1. **No Retrieval**: Skips all RAG steps
 2. **Direct LLM**: Sends query directly to LLM
 3. **Memory**: Still uses conversation memory
 
 **Use when:**
+
 - Testing LLM responses
 - General knowledge questions (no RAG needed)
 - Debugging LLM integration
@@ -171,18 +184,18 @@ result = await rag.query_with_memory(
 ## Comparison Table
 
 | Mode | Vector | Keyword | KG | Rerank | Best For |
-|------|--------|---------|----|----|----------|
+| ------ | -------- | --------- | ---- | ---- | ---------- |
 | `mix` | ✅ | ✅ | ✅ | ✅ | General queries |
 | `local` | ✅ | ❌ | ✅ | ✅ | Entity queries |
 | `global` | ✅ | ❌ | ✅ | ✅ | Overview queries |
 | `hybrid` | ✅ | ❌ | ✅ | ✅ | Comprehensive |
-| `naive` | ✅ | ❌ | ❌ | ❌ | Simple similarity |
+| `naive` | ✅ | ✅ | ❌ | ✅ | Filtered document retrieval |
 | `bypass` | ❌ | ❌ | ❌ | ❌ | Testing/debugging |
 
 ## Performance Characteristics
 
 | Mode | Speed | Quality | Use Cases |
-|------|-------|---------|-----------|
+| ------ | ------- | --------- | ----------- |
 | `mix` | Medium | Highest | Production |
 | `local` | Fast | High | Entity queries |
 | `global` | Fast | Medium | Summaries |
@@ -195,26 +208,31 @@ result = await rag.query_with_memory(
 **Start with `mix`** - It's the default and works best for most cases.
 
 **Switch to `local`** if:
+
 - Query mentions specific entities
 - You need relationship information
 - Results are too broad
 
 **Switch to `global`** if:
+
 - Query is very high-level
 - You want summarized information
 - Entity details aren't important
 
 **Use `hybrid`** if:
+
 - You need comprehensive answers
 - Query requires both facts and overview
 - Quality is more important than speed
 
 **Use `naive`** if:
+
 - You're testing embedding quality
 - You want simple similarity
 - Knowledge graph isn't needed
 
 **Use `bypass`** if:
+
 - Testing LLM integration
 - General knowledge questions
 - No RAG needed
@@ -286,5 +304,3 @@ result = await rag.query_with_memory(
 - [Installation Guide](installation.md) - Set up HybridRAG
 - [Configuration Guide](configuration.md) - Configure settings
 - [API Reference](api.md) - Use the Python SDK
-
-

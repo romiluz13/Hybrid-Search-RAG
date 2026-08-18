@@ -20,9 +20,10 @@ Each ADR follows this structure:
 |----|-------|--------|------|
 | [0001](0001-mongodb-single-database.md) | MongoDB Single Database Architecture | Accepted | 2026-01-20 |
 | [0002](0002-voyage-ai-embeddings.md) | Voyage AI for Embeddings | Accepted | 2026-01-20 |
-| [0003](0003-hybrid-search-rrf.md) | Hybrid Search with $rankFusion | Accepted | 2026-01-20 |
+| [0003](0003-hybrid-search-rrf.md) | Hybrid Search with $rankFusion | Superseded by 0008 | 2026-01-20 |
 | [0004](0004-prompts-module-architecture.md) | Prompts Module Architecture | Accepted | 2026-01-20 |
 | [0005](0005-filter-builder-systems.md) | Dual Filter Builder Systems | Accepted | 2026-01-20 |
+| [0008](0008-latest-first-search-capabilities.md) | Latest-First Search Capabilities | Accepted | 2026-08-18 |
 
 ## Contributing
 

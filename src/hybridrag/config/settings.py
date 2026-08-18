@@ -125,6 +125,38 @@ class Settings(BaseSettings):
         le=300000,
         description="Maximum time for aggregation pipelines in ms",
     )
+    filterable_metadata_fields: dict[
+        str, Literal["token", "number", "date", "boolean", "objectId", "uuid"]
+    ] = Field(
+        default_factory=lambda: {
+            "metadata.category": "token",
+            "metadata.year": "number",
+        },
+        description="Public metadata filter paths and Atlas Search mapping types",
+    )
+    vector_embedding_backend: Literal["client", "automated"] = Field(
+        default="client",
+        description="Client-generated vectors or MongoDB Automated Embedding",
+    )
+    automated_embedding_model: str = Field(
+        default="voyage-4-large",
+        description="MongoDB Automated Embedding model",
+    )
+
+    @field_validator("filterable_metadata_fields")
+    @classmethod
+    def validate_filterable_metadata_fields(
+        cls, value: dict[str, str]
+    ) -> dict[str, str]:
+        for path in value:
+            if (
+                not path.startswith("metadata.")
+                or path.count(".") != 1
+                or "$" in path
+                or "\x00" in path
+            ):
+                raise ValueError("Filterable metadata paths must use metadata.<field>")
+        return value
 
     # Voyage AI (for embeddings and reranking)
     voyage_api_key: SecretStr | None = Field(

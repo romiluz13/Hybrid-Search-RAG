@@ -11,8 +11,8 @@ from pydantic import BaseModel
 
 from ...base import QueryParam
 from ...base_engine import BaseRAGEngine as RAGEngine
-from .utils import TiktokenTokenizer, logger
-from .utils_api import get_combined_auth_dependency
+from ...utils import TiktokenTokenizer, logger
+from ..utils_api import get_combined_auth_dependency
 
 
 # query mode according to query prefix (bypass is not HybridRAG query mode)

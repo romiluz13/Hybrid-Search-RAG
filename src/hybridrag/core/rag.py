@@ -12,10 +12,11 @@ This is the main RAG engine providing:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -25,7 +26,12 @@ from ..config.settings import Settings, get_settings
 from ..engine import BaseRAGEngine as _RAGEngine
 from ..engine import EmbeddingFunc
 from ..engine import QueryParam as _QueryParam
+from ..engine.exceptions import SearchIndexApplyError, SearchIndexLifecycleError
+from ..engine.kg.mongo_impl import search_index_definition_satisfies
+from ..engine.security import resolve_retrieval_security_context
 from ..enhancements.entity_boosting import create_boosted_rerank_func
+from ..enhancements.filters import FilterConfig, RetrievalSecurityContext
+from ..enhancements.filters.metadata import normalize_metadata_batch
 from ..ingestion import (
     ChunkingConfig,
     DocumentIngestionPipeline,
@@ -53,6 +59,14 @@ class QueryParam:
     stream: bool = False
     include_references: bool = False
     response_type: str = "Multiple Paragraphs"
+    filter_config: FilterConfig | None = None
+    fusion_strategy: Literal["rank", "score"] | None = None
+    vector_search_mode: Literal["ann", "exact"] = "ann"
+    rerank_strategy: Literal["native", "external"] = "native"
+    native_rerank_model: Literal[
+        "rerank-2.5", "rerank-2.5-lite", "rerank-2", "rerank-2-lite"
+    ] = "rerank-2.5"
+    security_context: RetrievalSecurityContext | None = None
 
     def _to_internal(self) -> _QueryParam:
         """Convert to internal format."""
@@ -65,6 +79,12 @@ class QueryParam:
             stream=self.stream,
             include_references=self.include_references,
             response_type=self.response_type,
+            filter_config=self.filter_config,
+            fusion_strategy=self.fusion_strategy,
+            vector_search_mode=self.vector_search_mode,
+            rerank_strategy=self.rerank_strategy,
+            native_rerank_model=self.native_rerank_model,
+            security_context=self.security_context,
         )
 
 
@@ -74,6 +94,20 @@ if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger("hybridrag.core")
+
+
+def _validate_retrieval_options(
+    mode: str,
+    filter_config: FilterConfig | None,
+    fusion_strategy: Literal["rank", "score"] | None,
+) -> None:
+    """Reject retrieval options that cannot be honored by the selected mode."""
+    if filter_config is not None and mode != "naive":
+        raise ValueError("filter_config is supported only with mode='naive' in v1")
+    if fusion_strategy is not None and mode not in {"naive", "mix"}:
+        raise ValueError(
+            "fusion_strategy is supported only with mode='naive' or mode='mix'"
+        )
 
 
 def _build_inline_file_paths(
@@ -89,6 +123,7 @@ def _build_inline_file_paths(
     for index, document in enumerate(documents):
         stable_id = ids[index] if ids and index < len(ids) else None
         if not stable_id:
+            # pi-lens-ignore: python-weak-hash
             stable_id = hashlib.md5(document.encode("utf-8")).hexdigest()[:12]
         inline_paths.append(f"inline://{stable_id}")
     return inline_paths
@@ -219,7 +254,7 @@ def _create_embedding_func(
     return embed_func, settings.embedding_dim  # Use configured dimension
 
 
-def _create_llm_func(settings: Settings) -> Callable[..., str]:
+def _create_llm_func(settings: Settings) -> Callable[..., Any]:
     """Create LLM function based on provider setting."""
     if not settings.enable_llm:
         from ..engine.prompt import PROMPTS
@@ -258,7 +293,10 @@ def _create_llm_func(settings: Settings) -> Callable[..., str]:
         if settings.openai_extra_headers:
             import json
 
-            extra_headers = json.loads(settings.openai_extra_headers)
+            try:
+                extra_headers = json.loads(settings.openai_extra_headers)
+            except json.JSONDecodeError as exc:
+                raise ValueError("OPENAI_EXTRA_HEADERS must be valid JSON") from exc
         return create_openai_llm_func(
             api_key=settings.openai_api_key.get_secret_value(),
             model=settings.openai_model,
@@ -342,6 +380,10 @@ class HybridRAG:
     _llm_func: Callable | None = field(default=None, repr=False)
     _memory: ConversationMemory | None = field(default=None, repr=False)
     _initialized: bool = field(default=False, repr=False)
+    retrieval_security_context: RetrievalSecurityContext | None = field(
+        default=None,
+        repr=False,
+    )
 
     def _get_pipeline_embed_func(self) -> Callable:
         """Get a reusable embedding function for ingestion pipelines.
@@ -351,6 +393,8 @@ class HybridRAG:
         if not hasattr(self, "_cached_embedder"):
             from ..integrations.voyage import VoyageEmbedder
 
+            if self.settings.voyage_api_key is None:
+                raise ValueError("VOYAGE_API_KEY is required for ingestion")
             self._cached_embedder = VoyageEmbedder(
                 api_key=self.settings.voyage_api_key.get_secret_value(),
                 embedding_model=self.settings.voyage_embedding_model,
@@ -464,6 +508,7 @@ class HybridRAG:
         os.environ["MONGO_DATABASE"] = self.settings.mongodb_database
         self._rag_engine = _RAGEngine(
             working_dir=self.working_dir,
+            workspace=self.settings.mongodb_workspace,
             # MongoDB storage backends
             kv_storage="MongoKVStorage",
             vector_storage="MongoVectorDBStorage",
@@ -472,6 +517,10 @@ class HybridRAG:
             # Embedding integration
             embedding_func=embedding_func,
             rerank_model_func=rerank_func,
+            filterable_metadata_fields=self.settings.filterable_metadata_fields,
+            vector_embedding_backend=self.settings.vector_embedding_backend,
+            automated_embedding_model=self.settings.automated_embedding_model,
+            retrieval_security_context=self.retrieval_security_context,
             # LLM
             llm_model_func=llm_func,
         )
@@ -488,7 +537,7 @@ class HybridRAG:
         from ..engine.kg.shared_storage import initialize_pipeline_status
 
         logger.info("[INIT] Initializing pipeline status...")
-        await initialize_pipeline_status()
+        await initialize_pipeline_status(workspace=self.settings.mongodb_workspace)
 
         # Initialize conversation memory for multi-turn conversations
         # Pass LLM function to enable self-compaction (summarization)
@@ -519,6 +568,13 @@ class HybridRAG:
                 "HybridRAG not initialized. Call 'await rag.initialize()' first."
             )
         return self._rag_engine
+
+    def _ensure_memory(self) -> ConversationMemory:
+        """Return initialized conversation memory."""
+        self._ensure_initialized()
+        if self._memory is None:
+            raise RuntimeError("Conversation memory is not initialized")
+        return self._memory
 
     async def _expand_query_with_entities(
         self,
@@ -581,6 +637,7 @@ class HybridRAG:
         documents: str | Sequence[str],
         ids: Sequence[str] | None = None,
         file_paths: Sequence[str] | None = None,
+        metadata: Sequence[Mapping[str, Any]] | None = None,
     ) -> None:
         """
         Insert documents into the RAG system.
@@ -589,6 +646,7 @@ class HybridRAG:
             documents: Single document or list of documents to ingest
             ids: Optional document IDs
             file_paths: Optional file paths for metadata
+            metadata: Optional metadata object for each document
         """
         rag = self._ensure_initialized()
 
@@ -597,6 +655,11 @@ class HybridRAG:
             documents = [documents]
 
         doc_count = len(documents)
+        normalized_metadata = normalize_metadata_batch(
+            metadata,
+            doc_count,
+            getattr(self.settings, "filterable_metadata_fields", None),
+        )
         total_chars = sum(len(d) for d in documents)
         logger.info("[INSERT] ========== Starting Document Insertion ==========")
         logger.info(f"[INSERT] Documents: {doc_count}, Total chars: {total_chars:,}")
@@ -614,6 +677,7 @@ class HybridRAG:
                 input=list(documents),
                 ids=list(ids) if ids else None,
                 file_paths=resolved_file_paths,
+                metadata=normalized_metadata,
             )
             duration = _time.time() - start_time
             logger.info("[INSERT] ========== Document Insertion Complete ==========")
@@ -621,9 +685,9 @@ class HybridRAG:
             # Log to Langfuse if enabled
             if langfuse_enabled():
                 log_ingestion(
-                    file_name=resolved_file_paths[0]
-                    if resolved_file_paths
-                    else "unknown",
+                    file_name=(
+                        resolved_file_paths[0] if resolved_file_paths else "unknown"
+                    ),
                     num_chunks=doc_count,
                     num_entities=0,  # Not tracked at this level
                     num_relations=0,  # Not tracked at this level
@@ -851,7 +915,17 @@ class HybridRAG:
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_file = PathLib(temp_dir) / file_path.name
-            shutil.copy(file_path, temp_file)
+            try:
+                shutil.copy(file_path, temp_file)
+            except OSError as exc:
+                return IngestionResult(
+                    document_id="",
+                    title=file_path.name,
+                    chunks_created=0,
+                    processing_time_ms=0,
+                    errors=[f"Failed to stage file for ingestion: {exc}"],
+                    source=str(file_path),
+                )
 
             results = await self.ingest_files(temp_dir, config)
 
@@ -919,28 +993,22 @@ class HybridRAG:
 
         import time as _time
 
+        from ..ingestion.tavily_processor import (
+            BadRequestError,
+            ForbiddenError,
+            InvalidAPIKeyError,
+            MissingAPIKeyError,
+            TavilyProcessor,
+            UsageLimitExceededError,
+        )
+        from ..ingestion.tavily_processor import TimeoutError as TavilyTimeoutError
+
         start_time = _time.time()
 
         try:
-            # Import Tavily processor
-            from ..ingestion.tavily_processor import (
-                BadRequestError,
-                ForbiddenError,
-                InvalidAPIKeyError,
-                MissingAPIKeyError,
-                TavilyProcessor,
-                UsageLimitExceededError,
-            )
-            from ..ingestion.tavily_processor import (
-                TimeoutError as TavilyTimeoutError,
-            )
-
-            # Create Tavily processor
             processor = TavilyProcessor(
                 api_key=self.settings.tavily_api_key.get_secret_value()
             )
-
-            # Extract content from URL
             processed_doc = await processor.extract_url(url)
 
             # Use existing ingestion pipeline with shared client (C2/C3 fix)
@@ -1182,28 +1250,22 @@ class HybridRAG:
 
         import time as _time
 
+        from ..ingestion.tavily_processor import (
+            BadRequestError,
+            ForbiddenError,
+            InvalidAPIKeyError,
+            MissingAPIKeyError,
+            TavilyProcessor,
+            UsageLimitExceededError,
+        )
+        from ..ingestion.tavily_processor import TimeoutError as TavilyTimeoutError
+
         start_time = _time.time()
 
         try:
-            # Import Tavily processor
-            from ..ingestion.tavily_processor import (
-                BadRequestError,
-                ForbiddenError,
-                InvalidAPIKeyError,
-                MissingAPIKeyError,
-                TavilyProcessor,
-                UsageLimitExceededError,
-            )
-            from ..ingestion.tavily_processor import (
-                TimeoutError as TavilyTimeoutError,
-            )
-
-            # Create Tavily processor
             processor = TavilyProcessor(
                 api_key=self.settings.tavily_api_key.get_secret_value()
             )
-
-            # Crawl website
             processed_docs = await processor.crawl_website(
                 url=url, max_depth=max_depth, max_pages=max_pages
             )
@@ -1441,14 +1503,22 @@ class HybridRAG:
     async def query(
         self,
         query: str,
-        mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"]
-        | None = None,
+        mode: (
+            Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None
+        ) = None,
         top_k: int | None = None,
         rerank_top_k: int | None = None,
         enable_rerank: bool | None = None,
         only_context: bool = False,
         system_prompt: str | None = None,
         stream: bool = False,
+        filter_config: FilterConfig | None = None,
+        fusion_strategy: Literal["rank", "score"] | None = None,
+        vector_search_mode: Literal["ann", "exact"] = "ann",
+        rerank_strategy: Literal["native", "external"] = "native",
+        native_rerank_model: Literal[
+            "rerank-2.5", "rerank-2.5-lite", "rerank-2", "rerank-2-lite"
+        ] = "rerank-2.5",
     ) -> str | AsyncIterator[str]:
         """
         Query the RAG system.
@@ -1462,9 +1532,19 @@ class HybridRAG:
             only_context: If True, return only context without LLM response
             system_prompt: Optional system prompt for LLM
             stream: If True, return an async iterator of response chunks
+            filter_config: Backend-neutral filter expression for naive retrieval
+            fusion_strategy: Optional rank or score fusion selection
+            vector_search_mode: Approximate or exact vector execution
+            rerank_strategy: MongoDB-native or external reranking
+            native_rerank_model: MongoDB native Voyage reranking model
 
         Returns:
             Generated response, context string, or streaming iterator
+
+        Raises:
+            ValueError: If the query or retrieval options are invalid.
+            RetrievalCapabilityError: If a requested capability is unavailable.
+            RetrievalExecutionError: If the selected retrieval path fails.
         """
         rag = self._ensure_initialized()
 
@@ -1484,6 +1564,10 @@ class HybridRAG:
         resolved_enable_rerank = (
             enable_rerank if enable_rerank is not None else self.settings.enable_rerank
         )
+        _validate_retrieval_options(resolved_mode, filter_config, fusion_strategy)
+        security_context = resolve_retrieval_security_context(
+            self.retrieval_security_context
+        )
 
         logger.info("[QUERY] ========== Starting Query ==========")
         logger.info(
@@ -1498,7 +1582,12 @@ class HybridRAG:
 
         # Apply implicit expansion if enabled
         expanded_query = query
-        if self.settings.enable_implicit_expansion and hasattr(rag, "entities_vdb"):
+        if (
+            filter_config is None
+            and security_context is None
+            and self.settings.enable_implicit_expansion
+            and hasattr(rag, "entities_vdb")
+        ):
             expanded_query = await self._expand_query_with_entities(query, rag)
             if expanded_query != query:
                 logger.info("[QUERY] Implicit expansion applied, query expanded")
@@ -1511,6 +1600,12 @@ class HybridRAG:
             enable_rerank=resolved_enable_rerank,
             only_need_context=only_context,
             stream=stream,
+            filter_config=filter_config,
+            fusion_strategy=fusion_strategy,
+            vector_search_mode=vector_search_mode,
+            rerank_strategy=rerank_strategy,
+            native_rerank_model=native_rerank_model,
+            security_context=security_context,
         )
 
         try:
@@ -1524,6 +1619,11 @@ class HybridRAG:
                     top_k=resolved_top_k,
                     rerank_top_k=resolved_rerank_top_k,
                     enable_rerank=resolved_enable_rerank,
+                    filter_config=filter_config,
+                    fusion_strategy=fusion_strategy,
+                    vector_search_mode=vector_search_mode,
+                    rerank_strategy=rerank_strategy,
+                    native_rerank_model=native_rerank_model,
                 )
                 context = result.get("context", "")
                 logger.info(f"[QUERY] Response received: {len(context)} chars")
@@ -1544,6 +1644,11 @@ class HybridRAG:
                     top_k=resolved_top_k,
                     rerank_top_k=resolved_rerank_top_k,
                     enable_rerank=resolved_enable_rerank,
+                    filter_config=filter_config,
+                    fusion_strategy=fusion_strategy,
+                    vector_search_mode=vector_search_mode,
+                    rerank_strategy=rerank_strategy,
+                    native_rerank_model=native_rerank_model,
                 )
                 context = result.get("context", "")
                 logger.info(f"[QUERY] Response received: {len(context)} chars")
@@ -1569,6 +1674,8 @@ class HybridRAG:
                 )
                 response = ""
 
+            if not isinstance(response, str):
+                raise TypeError("Non-streaming query returned a streaming response")
             response_len = len(response)
             logger.info(f"[QUERY] Response received: {response_len} chars")
             logger.info("[QUERY] ========== Query Complete ==========")
@@ -1580,13 +1687,42 @@ class HybridRAG:
     async def query_data(
         self,
         query: str,
-        mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"]
-        | None = None,
+        mode: (
+            Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None
+        ) = None,
         top_k: int | None = None,
         rerank_top_k: int | None = None,
         enable_rerank: bool | None = None,
+        filter_config: FilterConfig | None = None,
+        fusion_strategy: Literal["rank", "score"] | None = None,
+        vector_search_mode: Literal["ann", "exact"] = "ann",
+        rerank_strategy: Literal["native", "external"] = "native",
+        native_rerank_model: Literal[
+            "rerank-2.5", "rerank-2.5-lite", "rerank-2", "rerank-2-lite"
+        ] = "rerank-2.5",
     ) -> dict[str, Any]:
-        """Return structured retrieval data and the assembled context string."""
+        """Return structured retrieval data and the assembled context string.
+
+        Args:
+            query: Search query.
+            mode: Query mode.
+            top_k: Number of documents to retrieve.
+            rerank_top_k: Number of chunks retained after reranking.
+            enable_rerank: Whether to rerank retrieved chunks.
+            filter_config: Backend-neutral filter expression for naive retrieval.
+            fusion_strategy: Optional rank or score fusion selection.
+            vector_search_mode: Approximate or exact vector execution.
+            rerank_strategy: MongoDB-native or external reranking.
+            native_rerank_model: MongoDB native Voyage reranking model.
+
+        Returns:
+            Structured retrieval data, diagnostics, references, and context.
+
+        Raises:
+            ValueError: If retrieval options are invalid.
+            RetrievalCapabilityError: If a requested capability is unavailable.
+            RetrievalExecutionError: If the selected retrieval path fails.
+        """
         rag = self._ensure_initialized()
 
         resolved_mode = mode or self.settings.default_query_mode
@@ -1595,6 +1731,10 @@ class HybridRAG:
         resolved_enable_rerank = (
             enable_rerank if enable_rerank is not None else self.settings.enable_rerank
         )
+        _validate_retrieval_options(resolved_mode, filter_config, fusion_strategy)
+        security_context = resolve_retrieval_security_context(
+            self.retrieval_security_context
+        )
 
         param = QueryParam(
             mode=resolved_mode,
@@ -1602,6 +1742,12 @@ class HybridRAG:
             chunk_top_k=resolved_rerank_top_k,
             enable_rerank=resolved_enable_rerank,
             only_need_context=True,
+            filter_config=filter_config,
+            fusion_strategy=fusion_strategy,
+            vector_search_mode=vector_search_mode,
+            rerank_strategy=rerank_strategy,
+            native_rerank_model=native_rerank_model,
+            security_context=security_context,
         )
 
         result = await rag.aquery_llm(query=query, param=param._to_internal())
@@ -1615,9 +1761,19 @@ class HybridRAG:
     async def query_with_sources(
         self,
         query: str,
-        mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"]
-        | None = None,
+        mode: (
+            Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None
+        ) = None,
         top_k: int | None = None,
+        rerank_top_k: int | None = None,
+        enable_rerank: bool | None = None,
+        filter_config: FilterConfig | None = None,
+        fusion_strategy: Literal["rank", "score"] | None = None,
+        vector_search_mode: Literal["ann", "exact"] = "ann",
+        rerank_strategy: Literal["native", "external"] = "native",
+        native_rerank_model: Literal[
+            "rerank-2.5", "rerank-2.5-lite", "rerank-2", "rerank-2-lite"
+        ] = "rerank-2.5",
     ) -> dict[str, Any]:
         """
         Query and return both response and source context.
@@ -1629,13 +1785,25 @@ class HybridRAG:
             query: Search query
             mode: Query mode
             top_k: Number of results
+            rerank_top_k: Number of chunks retained after reranking
+            enable_rerank: Whether to rerank retrieved chunks
+            filter_config: Backend-neutral filter expression for naive retrieval
+            fusion_strategy: Optional rank or score fusion selection
+            vector_search_mode: Approximate or exact vector execution
+            rerank_strategy: MongoDB-native or external reranking
+            native_rerank_model: MongoDB native Voyage reranking model
 
         Returns:
             Dict with 'answer' and 'context' keys
+
+        Raises:
+            ValueError: If retrieval options are invalid.
+            RetrievalCapabilityError: If a requested capability is unavailable.
+            RetrievalExecutionError: If the selected retrieval path fails.
         """
         self._ensure_initialized()
         resolved_mode = mode or self.settings.default_query_mode
-
+        _validate_retrieval_options(resolved_mode, filter_config, fusion_strategy)
         logger.info(
             f"[QUERY_WITH_SOURCES] Starting query with sources: mode={resolved_mode}"
         )
@@ -1646,6 +1814,13 @@ class HybridRAG:
             query=query,
             mode=mode,
             top_k=top_k,
+            rerank_top_k=rerank_top_k,
+            enable_rerank=enable_rerank,
+            filter_config=filter_config,
+            fusion_strategy=fusion_strategy,
+            vector_search_mode=vector_search_mode,
+            rerank_strategy=rerank_strategy,
+            native_rerank_model=native_rerank_model,
         )
         context = structured.get("context", "")
         context_len = len(context) if context else 0
@@ -1669,8 +1844,8 @@ class HybridRAG:
 Please provide a comprehensive answer based only on the information provided in the context above."""
 
             try:
-                response = await self._llm_func(generation_prompt)
-                response = response.strip() if response else ""
+                generated = await self._llm_func(generation_prompt)
+                response = str(generated).strip() if generated else ""
             except Exception as e:
                 logger.error(f"[QUERY_WITH_SOURCES] LLM generation failed: {e}")
                 response = "I apologize, but I was unable to generate a response. Please try again."
@@ -1706,14 +1881,22 @@ Please provide a comprehensive answer based only on the information provided in 
     async def stream_query(
         self,
         query: str,
-        mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"]
-        | None = None,
+        mode: (
+            Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None
+        ) = None,
         top_k: int | None = None,
         rerank_top_k: int | None = None,
         enable_rerank: bool | None = None,
         include_context: bool = False,
         include_references: bool = True,
         system_prompt: str | None = None,
+        filter_config: FilterConfig | None = None,
+        fusion_strategy: Literal["rank", "score"] | None = None,
+        vector_search_mode: Literal["ann", "exact"] = "ann",
+        rerank_strategy: Literal["native", "external"] = "native",
+        native_rerank_model: Literal[
+            "rerank-2.5", "rerank-2.5-lite", "rerank-2", "rerank-2-lite"
+        ] = "rerank-2.5",
     ) -> dict[str, Any]:
         """Return a streaming iterator plus source metadata for a query."""
         rag = self._ensure_initialized()
@@ -1722,10 +1905,14 @@ Please provide a comprehensive answer based only on the information provided in 
             raise ValueError("Streaming requires enable_llm=True on the blessed stack")
 
         resolved_mode = mode or self.settings.default_query_mode
+        _validate_retrieval_options(resolved_mode, filter_config, fusion_strategy)
         resolved_top_k = top_k or self.settings.default_top_k
         resolved_rerank_top_k = rerank_top_k or self.settings.default_rerank_top_k
         resolved_enable_rerank = (
             enable_rerank if enable_rerank is not None else self.settings.enable_rerank
+        )
+        security_context = resolve_retrieval_security_context(
+            self.retrieval_security_context
         )
 
         param = QueryParam(
@@ -1735,6 +1922,12 @@ Please provide a comprehensive answer based only on the information provided in 
             enable_rerank=resolved_enable_rerank,
             stream=True,
             include_references=include_references,
+            filter_config=filter_config,
+            fusion_strategy=fusion_strategy,
+            vector_search_mode=vector_search_mode,
+            rerank_strategy=rerank_strategy,
+            native_rerank_model=native_rerank_model,
+            security_context=security_context,
         )
         result = await rag.aquery_llm(
             query=query,
@@ -1757,9 +1950,9 @@ Please provide a comprehensive answer based only on the information provided in 
         return {
             "query": query,
             "mode": resolved_mode,
-            "context": _extract_context_from_query_data(result)
-            if include_context
-            else None,
+            "context": (
+                _extract_context_from_query_data(result) if include_context else None
+            ),
             "references": (
                 _extract_references_from_query_data(result)
                 if include_references
@@ -1776,8 +1969,9 @@ Please provide a comprehensive answer based only on the information provided in 
         self,
         query: str,
         session_id: str,
-        mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"]
-        | None = None,
+        mode: (
+            Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None
+        ) = None,
         top_k: int | None = None,
         max_history_messages: int = 10,
     ) -> dict[str, Any]:
@@ -1801,27 +1995,27 @@ Please provide a comprehensive answer based only on the information provided in 
         Returns:
             Dict with 'answer', 'context', 'session_id', 'history_used'
         """
-        self._ensure_initialized()
+        memory = self._ensure_memory()
         resolved_mode = mode or self.settings.default_query_mode
 
         logger.info(f"[QUERY_WITH_MEMORY] Session: {session_id}, mode={resolved_mode}")
 
         # Ensure session exists
-        session = await self._memory.get_session(session_id)
+        session = await memory.get_session(session_id)
         if not session:
-            session_id = await self._memory.create_session(session_id)
+            session_id = await memory.create_session(session_id)
             logger.info(f"[QUERY_WITH_MEMORY] Created new session: {session_id}")
 
         # Get conversation history
-        history = await self._memory.get_history(session_id, max_history_messages)
-        history_context = await self._memory.get_context_string(
+        history = await memory.get_history(session_id, max_history_messages)
+        history_context = await memory.get_context_string(
             session_id, max_history_messages
         )
 
         logger.info(f"[QUERY_WITH_MEMORY] History messages: {len(history)}")
 
         # Store user query first
-        await self._memory.add_message(session_id, "user", query)
+        await memory.add_message(session_id, "user", query)
 
         # Augment query with conversation context for better retrieval
         if history_context:
@@ -1837,6 +2031,8 @@ Please provide a comprehensive answer based only on the information provided in 
             top_k=top_k,
             only_context=True,
         )
+        if not isinstance(context, str):
+            raise TypeError("Conversation retrieval returned a streaming response")
         context_len = len(context) if context else 0
         logger.info(f"[QUERY_WITH_MEMORY] Context retrieved: {context_len} chars")
 
@@ -1865,8 +2061,8 @@ If this is a follow-up question (like "explain that", "what do you mean", "tell 
 Provide a helpful, comprehensive answer."""
 
             try:
-                response = await self._llm_func(generation_prompt)
-                response = response.strip() if response else ""
+                generated = await self._llm_func(generation_prompt)
+                response = str(generated).strip() if generated else ""
             except Exception as e:
                 logger.error(f"[QUERY_WITH_MEMORY] LLM generation failed: {e}")
                 response = "I apologize, but I was unable to generate a response. Please try again."
@@ -1874,7 +2070,7 @@ Provide a helpful, comprehensive answer."""
             response = context if context else "No relevant information found."
 
         # Store assistant response
-        await self._memory.add_message(session_id, "assistant", response)
+        await memory.add_message(session_id, "assistant", response)
 
         response_len = len(response) if response else 0
         logger.info(f"[QUERY_WITH_MEMORY] Response generated: {response_len} chars")
@@ -1919,8 +2115,7 @@ Provide a helpful, comprehensive answer."""
         Returns:
             Session ID
         """
-        self._ensure_initialized()
-        return await self._memory.create_session(session_id, metadata)
+        return await self._ensure_memory().create_session(session_id, metadata)
 
     async def get_conversation_history(
         self,
@@ -1937,8 +2132,7 @@ Provide a helpful, comprehensive answer."""
         Returns:
             List of message dicts
         """
-        self._ensure_initialized()
-        return await self._memory.get_messages(session_id, limit)
+        return await self._ensure_memory().get_messages(session_id, limit)
 
     async def clear_conversation(self, session_id: str) -> None:
         """
@@ -1947,8 +2141,7 @@ Provide a helpful, comprehensive answer."""
         Args:
             session_id: Session ID
         """
-        self._ensure_initialized()
-        await self._memory.clear_session(session_id)
+        await self._ensure_memory().clear_session(session_id)
 
     async def delete_document(self, doc_id: str) -> None:
         """
@@ -1956,9 +2149,479 @@ Provide a helpful, comprehensive answer."""
 
         Args:
             doc_id: Document ID to delete
+
+        Raises:
+            PermissionError: If the scoped principal does not own the document.
+            ValueError: If tenant ownership configuration is invalid.
         """
         rag = self._ensure_initialized()
+        from hybridrag.engine.security import require_document_ownership
+
+        document = await rag.doc_status.get_by_id(doc_id)
+        require_document_ownership(document, self.retrieval_security_context)
         await rag.adelete_by_doc_id(doc_id)
+
+    def _require_chunk_storage_method(self, method_name: str) -> Callable[..., Any]:
+        rag = self._ensure_initialized()
+        method = getattr(rag.chunks_vdb, method_name, None)
+        if method is None:
+            raise RuntimeError(
+                f"Configured vector storage does not support {method_name}"
+            )
+        return method
+
+    async def list_search_indexes(self) -> list[dict[str, Any]]:
+        """Return stable search-index readiness records."""
+        rag = self._ensure_initialized()
+        statuses: list[dict[str, Any]] = []
+        for attribute, label in (
+            ("chunks_vdb", "chunks"),
+            ("entities_vdb", "entities"),
+            ("relationships_vdb", "relationships"),
+            ("chunk_entity_relation_graph", "graph"),
+        ):
+            storage = getattr(rag, attribute, None)
+            method = getattr(storage, "list_search_index_statuses", None)
+            if method is None:
+                continue
+            statuses.extend({**status, "storage": label} for status in await method())
+        if not statuses:
+            raise RuntimeError(
+                "Configured storages do not support search-index diagnostics"
+            )
+        return statuses
+
+    async def plan_search_indexes(self) -> list[dict[str, Any]]:
+        """Plan every Search and Vector Search index without mutating MongoDB.
+
+        Returns:
+            Desired and observed definitions plus the required action per storage.
+        """
+        rag = self._ensure_initialized()
+        operations = (
+            (rag.chunks_vdb, "plan_vector_index", "chunks", "vector"),
+            (rag.chunks_vdb, "plan_text_search_index", "chunks", "text"),
+            (rag.entities_vdb, "plan_vector_index", "entities", "vector"),
+            (
+                rag.relationships_vdb,
+                "plan_vector_index",
+                "relationships",
+                "vector",
+            ),
+            (
+                rag.chunk_entity_relation_graph,
+                "plan_search_index",
+                "graph",
+                "text",
+            ),
+        )
+        plans: list[dict[str, Any]] = []
+        for storage, method_name, label, index_kind in operations:
+            method = getattr(storage, method_name, None)
+            if method is None:
+                raise RuntimeError(
+                    f"Configured {label} storage does not support {method_name}"
+                )
+            plans.append(
+                {
+                    **await method(),
+                    "storage": label,
+                    "index_kind": index_kind,
+                }
+            )
+        return plans
+
+    async def apply_search_index_plans(self) -> list[dict[str, Any]]:
+        """Explicitly apply every Search and Vector Search index plan.
+
+        Returns:
+            Applied plans containing acknowledgement and rollback material.
+        """
+        rag = self._ensure_initialized()
+        operations = (
+            (rag.chunks_vdb, "apply_vector_index_plan", "chunks", "vector"),
+            (rag.chunks_vdb, "apply_text_search_index_plan", "chunks", "text"),
+            (rag.entities_vdb, "apply_vector_index_plan", "entities", "vector"),
+            (
+                rag.relationships_vdb,
+                "apply_vector_index_plan",
+                "relationships",
+                "vector",
+            ),
+            (
+                rag.chunk_entity_relation_graph,
+                "apply_search_index_plan",
+                "graph",
+                "text",
+            ),
+        )
+        applied: list[dict[str, Any]] = []
+        for storage, method_name, label, index_kind in operations:
+            method = getattr(storage, method_name, None)
+            if method is None:
+                raise SearchIndexApplyError(
+                    f"Configured {label} storage does not support {method_name}",
+                    applied,
+                )
+            try:
+                result = await method()
+            except Exception as error:
+                raise SearchIndexApplyError(
+                    f"Search index apply failed for {label}/{index_kind}",
+                    applied,
+                ) from error
+            applied.append({**result, "storage": label, "index_kind": index_kind})
+        return applied
+
+    async def rollback_search_index_plans(
+        self,
+        applied_plans: Sequence[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Rollback an all-index apply operation in reverse order.
+
+        Args:
+            applied_plans: Plans returned by :meth:`apply_search_index_plans`.
+
+        Returns:
+            Acknowledged rollback operations in execution order.
+
+        Raises:
+            ValueError: If a plan does not identify a supported index target.
+            RuntimeError: If the configured storage lacks rollback support.
+        """
+        rag = self._ensure_initialized()
+        targets = {
+            ("chunks", "vector"): (rag.chunks_vdb, "rollback_vector_index"),
+            ("chunks", "text"): (
+                rag.chunks_vdb,
+                "rollback_text_search_index",
+            ),
+            ("entities", "vector"): (
+                rag.entities_vdb,
+                "rollback_vector_index",
+            ),
+            ("relationships", "vector"): (
+                rag.relationships_vdb,
+                "rollback_vector_index",
+            ),
+            ("graph", "text"): (
+                rag.chunk_entity_relation_graph,
+                "rollback_search_index_plan",
+            ),
+        }
+        rolled_back: list[dict[str, Any]] = []
+        for plan in reversed(applied_plans):
+            target = (plan.get("storage"), plan.get("index_kind"))
+            if target not in targets:
+                raise ValueError(f"Unsupported search-index rollback target: {target}")
+            storage, method_name = targets[target]
+            method = getattr(storage, method_name, None)
+            if method is None:
+                raise RuntimeError(
+                    f"Configured {target[0]} storage does not support {method_name}"
+                )
+            rolled_back.append(
+                {
+                    **await method(plan),
+                    "storage": target[0],
+                    "index_kind": target[1],
+                }
+            )
+        return rolled_back
+
+    async def wait_for_search_indexes(
+        self,
+        index_names: Sequence[str | Mapping[str, Any]],
+        timeout_seconds: float = 300,
+        poll_interval_seconds: float = 2,
+    ) -> list[dict[str, Any]]:
+        """Wait for explicitly selected indexes to become fresh and queryable.
+
+        Args:
+            index_names: Names from explicit apply-plan results.
+            timeout_seconds: Maximum total wait time.
+            poll_interval_seconds: Delay between readiness observations.
+
+        Returns:
+            Healthy status records for every matching storage.
+
+        Raises:
+            ValueError: If no index names are provided.
+            SearchIndexLifecycleError: If a build fails or times out.
+        """
+        if not index_names:
+            raise ValueError("index_names cannot be empty")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+        selected = {
+            item if isinstance(item, str) else str(item.get("index_name", ""))
+            for item in index_names
+        }
+        if "" in selected:
+            raise ValueError("Applied index plans must include index_name")
+        exact_desired = {
+            (str(item.get("storage", "")), str(item["index_name"])): item["desired"]
+            for item in index_names
+            if isinstance(item, Mapping) and isinstance(item.get("desired"), dict)
+        }
+        statuses: list[dict[str, Any]] = []
+        while loop.time() < deadline:
+            statuses = [
+                status
+                for status in await self.list_search_indexes()
+                if status["name"] in selected
+            ]
+            for status in statuses:
+                desired = exact_desired.get(
+                    (str(status.get("storage", "")), status["name"])
+                )
+                if desired is None:
+                    continue
+                backend = status.get("backend_metadata", {})
+                observed = backend.get("latestDefinition") or backend.get("definition")
+                matches = search_index_definition_satisfies(observed, desired)
+                status["fresh"] = status["status"] == "ready" and matches
+                status["healthy"] = status["fresh"] and status["queryable"]
+            failures = [status for status in statuses if status["status"] == "failed"]
+            if failures:
+                failed_names = ", ".join(status["name"] for status in failures)
+                raise SearchIndexLifecycleError(
+                    f"Search index build failed: {failed_names}"
+                )
+            observed_names = {status["name"] for status in statuses}
+            if selected.issubset(observed_names) and all(
+                status["healthy"] for status in statuses
+            ):
+                return statuses
+            await asyncio.sleep(poll_interval_seconds)
+        last_state = ", ".join(
+            f"{status.get('storage', 'unknown')}/{status['name']}={status['status']}"
+            for status in statuses
+        )
+        raise SearchIndexLifecycleError(
+            "Search indexes did not become fresh and queryable before timeout; "
+            f"last status: {last_state or 'none'}"
+        )
+
+    async def plan_vector_index(
+        self,
+        quantization: (
+            Literal["none", "scalar", "binary", "binaryNoRescore"] | None
+        ) = None,
+        indexing_method: Literal["flat", "hnsw"] | None = None,
+        hnsw_options: dict[str, int] | None = None,
+        num_dimensions: int | None = None,
+        similarity: Literal["euclidean", "cosine", "dotProduct"] | None = None,
+    ) -> dict[str, Any]:
+        """Plan a vector-index definition change without applying it."""
+        method = self._require_chunk_storage_method("plan_vector_index")
+        return await method(
+            quantization,
+            indexing_method,
+            hnsw_options,
+            num_dimensions,
+            similarity,
+        )
+
+    async def apply_vector_index_plan(
+        self,
+        quantization: (
+            Literal["none", "scalar", "binary", "binaryNoRescore"] | None
+        ) = None,
+        indexing_method: Literal["flat", "hnsw"] | None = None,
+        hnsw_options: dict[str, int] | None = None,
+        num_dimensions: int | None = None,
+        similarity: Literal["euclidean", "cosine", "dotProduct"] | None = None,
+    ) -> dict[str, Any]:
+        """Explicitly apply a previously inspectable vector-index plan."""
+        method = self._require_chunk_storage_method("apply_vector_index_plan")
+        return await method(
+            quantization,
+            indexing_method,
+            hnsw_options,
+            num_dimensions,
+            similarity,
+        )
+
+    async def plan_text_search_index(self) -> dict[str, Any]:
+        """Plan the chunk text-search index without mutating MongoDB.
+
+        Returns:
+            Desired, observed, and required index action.
+        """
+        method = self._require_chunk_storage_method("plan_text_search_index")
+        return await method()
+
+    async def apply_text_search_index_plan(self) -> dict[str, Any]:
+        """Explicitly apply the current chunk text-search index plan.
+
+        Returns:
+            Applied plan with acknowledgement and rollback material.
+        """
+        method = self._require_chunk_storage_method("apply_text_search_index_plan")
+        return await method()
+
+    async def wait_for_search_index(
+        self,
+        index_name: str,
+        timeout_seconds: float = 300,
+        poll_interval_seconds: float = 2,
+    ) -> dict[str, Any]:
+        """Wait for a chunk search index to become ready and queryable."""
+        method = self._require_chunk_storage_method("wait_for_search_index")
+        return await method(index_name, timeout_seconds, poll_interval_seconds)
+
+    async def rollback_vector_index(
+        self,
+        applied_plan: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Rollback an applied chunk vector-index plan."""
+        method = self._require_chunk_storage_method("rollback_vector_index")
+        return await method(applied_plan)
+
+    async def rollback_text_search_index(
+        self,
+        applied_plan: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Rollback an applied chunk text-search index plan.
+
+        Args:
+            applied_plan: Applied plan containing the previous definition.
+
+        Returns:
+            Acknowledged rollback operation.
+        """
+        method = self._require_chunk_storage_method("rollback_text_search_index")
+        return await method(applied_plan)
+
+    async def compile_query_plan(
+        self,
+        query: str,
+        mode: (
+            Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None
+        ) = None,
+        top_k: int | None = None,
+        filter_config: FilterConfig | None = None,
+        fusion_strategy: Literal["rank", "score"] | None = None,
+        enable_rerank: bool | None = None,
+        vector_search_mode: Literal["ann", "exact"] = "ann",
+        rerank_strategy: Literal["native", "external"] = "native",
+        native_rerank_model: Literal[
+            "rerank-2.5", "rerank-2.5-lite", "rerank-2", "rerank-2-lite"
+        ] = "rerank-2.5",
+    ) -> dict[str, Any]:
+        """Compile a deterministic local MongoDB retrieval plan.
+
+        Args:
+            query: Query text compiled into the retrieval plan.
+            mode: Retrieval mode; only ``naive`` is supported.
+            top_k: Maximum returned documents.
+            filter_config: Optional caller metadata constraints.
+            fusion_strategy: Rank or score fusion; score is the default.
+            enable_rerank: Whether the plan includes reranking.
+            vector_search_mode: Approximate or exact vector execution.
+            rerank_strategy: Native or external reranking selection.
+            native_rerank_model: MongoDB native reranking model.
+
+        Returns:
+            Redacted local pipeline and effective retrieval options.
+
+        Raises:
+            ValueError: If the retrieval mode or options are invalid.
+        """
+        resolved_mode = mode or self.settings.default_query_mode
+        _validate_retrieval_options(resolved_mode, filter_config, fusion_strategy)
+        if resolved_mode != "naive":
+            raise ValueError("compile_query_plan supports only naive retrieval")
+        method = self._require_chunk_storage_method("compile_hybrid_query")
+        resolved_enable_rerank = (
+            enable_rerank if enable_rerank is not None else self.settings.enable_rerank
+        )
+        explanation = await method(
+            query,
+            top_k=top_k or self.settings.default_top_k,
+            use_rank_fusion=fusion_strategy == "rank",
+            filter_config=filter_config,
+            security_context=resolve_retrieval_security_context(
+                self.retrieval_security_context
+            ),
+            vector_search_mode=vector_search_mode,
+            native_rerank_model=(
+                native_rerank_model
+                if resolved_enable_rerank and rerank_strategy == "native"
+                else None
+            ),
+        )
+        return {
+            "mode": resolved_mode,
+            "rerank_strategy": rerank_strategy,
+            **explanation,
+        }
+
+    async def explain_query(
+        self,
+        query: str,
+        mode: (
+            Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None
+        ) = None,
+        top_k: int | None = None,
+        filter_config: FilterConfig | None = None,
+        fusion_strategy: Literal["rank", "score"] | None = None,
+        enable_rerank: bool | None = None,
+        vector_search_mode: Literal["ann", "exact"] = "ann",
+        rerank_strategy: Literal["native", "external"] = "native",
+        native_rerank_model: Literal[
+            "rerank-2.5", "rerank-2.5-lite", "rerank-2", "rerank-2-lite"
+        ] = "rerank-2.5",
+    ) -> dict[str, Any]:
+        """Execute a redacted MongoDB server explanation for naive retrieval.
+
+        Args:
+            query: Query text executed through MongoDB explain.
+            mode: Retrieval mode; only ``naive`` is supported.
+            top_k: Maximum returned documents.
+            filter_config: Optional caller metadata constraints.
+            fusion_strategy: Rank or score fusion; score is the default.
+            enable_rerank: Whether the plan includes reranking.
+            vector_search_mode: Approximate or exact vector execution.
+            rerank_strategy: Native or external reranking selection.
+            native_rerank_model: MongoDB native reranking model.
+
+        Returns:
+            Redacted local plan and MongoDB execution explanation.
+
+        Raises:
+            ValueError: If the retrieval mode or options are invalid.
+            RetrievalExecutionError: If MongoDB explanation fails.
+        """
+        resolved_mode = mode or self.settings.default_query_mode
+        _validate_retrieval_options(resolved_mode, filter_config, fusion_strategy)
+        if resolved_mode != "naive":
+            raise ValueError("explain_query supports only naive retrieval")
+        method = self._require_chunk_storage_method("explain_hybrid_query")
+        resolved_enable_rerank = (
+            enable_rerank if enable_rerank is not None else self.settings.enable_rerank
+        )
+        explanation = await method(
+            query,
+            top_k=top_k or self.settings.default_top_k,
+            use_rank_fusion=fusion_strategy == "rank",
+            filter_config=filter_config,
+            security_context=resolve_retrieval_security_context(
+                self.retrieval_security_context
+            ),
+            vector_search_mode=vector_search_mode,
+            native_rerank_model=(
+                native_rerank_model
+                if resolved_enable_rerank and rerank_strategy == "native"
+                else None
+            ),
+        )
+        return {
+            "mode": resolved_mode,
+            "rerank_strategy": rerank_strategy,
+            **explanation,
+        }
 
     async def get_status(self) -> dict[str, Any]:
         """
@@ -1989,11 +2652,13 @@ Provide a helpful, comprehensive answer."""
             "llm_model": llm_model,
             "embedding_provider": self.settings.embedding_provider,
             "embedding_model": embedding_model,
-            "rerank_model": self.settings.voyage_rerank_model
-            if self.settings.voyage_api_key
-            else None,
+            "rerank_model": (
+                self.settings.voyage_rerank_model
+                if self.settings.voyage_api_key
+                else None
+            ),
             "blessed_stack": {
-                "mongodb": "Atlas 8.2+ / atlas-local:preview",
+                "mongodb": "Latest Atlas capabilities / atlas-local:preview",
                 "embedding": "Voyage",
                 "llm": "OpenAI-compatible API",
                 "shape": "backend-first",
@@ -2046,22 +2711,35 @@ Provide a helpful, comprehensive answer."""
 
             # Get entity count -- use estimated_document_count() for unfiltered
             # counts (avoids collection scan per mongodb-query-optimizer skill)
-            entity_count = await rag.entities_vdb._data.estimated_document_count()
+            entities_collection = getattr(rag.entities_vdb, "_data", None)
+            relationships_collection = getattr(rag.relationships_vdb, "_data", None)
+            chunks_collection = getattr(rag.chunks_vdb, "_data", None)
+            doc_status_collection = getattr(rag.doc_status, "_data", None)
+            if entities_collection is None:
+                raise RuntimeError("Entity collection is unavailable")
+            if relationships_collection is None:
+                raise RuntimeError("Relationship collection is unavailable")
+            if chunks_collection is None:
+                raise RuntimeError("Chunk collection is unavailable")
+            if doc_status_collection is None:
+                raise RuntimeError("Document-status collection is unavailable")
+
+            entity_count = await entities_collection.estimated_document_count()
             stats["entities"] = entity_count
 
             # Get relationship count
             relationship_count = (
-                await rag.relationships_vdb._data.estimated_document_count()
+                await relationships_collection.estimated_document_count()
             )
             stats["relationships"] = relationship_count
 
             # Get chunk count
-            chunk_count = await rag.chunks_vdb._data.estimated_document_count()
+            chunk_count = await chunks_collection.estimated_document_count()
             stats["chunks"] = chunk_count
 
             # Get recent documents (last 10)
             cursor = (
-                rag.doc_status._data.find(
+                doc_status_collection.find(
                     {},
                     {
                         "_id": 0,
@@ -2096,6 +2774,7 @@ async def create_hybridrag(
     settings: Settings | None = None,
     working_dir: str = "./hybridrag_workspace",
     auto_initialize: bool = True,
+    retrieval_security_context: RetrievalSecurityContext | None = None,
 ) -> HybridRAG:
     """
     Factory function to create and optionally initialize HybridRAG.
@@ -2104,6 +2783,7 @@ async def create_hybridrag(
         settings: Optional settings override
         working_dir: Working directory for cache
         auto_initialize: Whether to initialize automatically
+        retrieval_security_context: Server-owned mandatory retrieval constraints
 
     Returns:
         HybridRAG instance
@@ -2111,6 +2791,7 @@ async def create_hybridrag(
     rag = HybridRAG(
         settings=settings or get_settings(),
         working_dir=working_dir,
+        retrieval_security_context=retrieval_security_context,
     )
 
     if auto_initialize:

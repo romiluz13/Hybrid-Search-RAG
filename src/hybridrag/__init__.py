@@ -40,11 +40,14 @@ from .enhancements.entity_boosting import (
 )
 from .enhancements.filters import (
     AtlasSearchFilterConfig,
+    FilterConfig,
+    FilterPredicate,
     FuzzyFilter,
     GeoFilter,
     LexicalPrefilterConfig,
     PhraseFilter,
     QueryStringFilter,
+    RetrievalSecurityContext,
     TextFilter,
     VectorSearchFilterConfig,
     WildcardFilter,
@@ -52,13 +55,6 @@ from .enhancements.filters import (
     build_search_vector_search_stage,
 )
 from .enhancements.implicit_expansion import ImplicitExpander
-from .enhancements.mongodb_hybrid_search import (
-    MongoDBHybridSearchConfig,
-    SearchResult,
-    manual_hybrid_search_with_rrf,
-    reciprocal_rank_fusion,
-    vector_search_with_lexical_prefilters,
-)
 
 # Ingestion exports (document processing and chunking)
 from .ingestion import (
@@ -124,7 +120,7 @@ def run_cli():
     return _run_cli()
 
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = [
     # Core
     "HybridRAG",
@@ -142,13 +138,10 @@ __all__ = [
     "EntityBoostingReranker",
     "create_boosted_rerank_func",
     "ImplicitExpander",
-    # Hybrid Search
-    "SearchResult",
-    "MongoDBHybridSearchConfig",
-    "manual_hybrid_search_with_rrf",
-    "reciprocal_rank_fusion",
-    "vector_search_with_lexical_prefilters",
     # Filter Configs
+    "FilterConfig",
+    "FilterPredicate",
+    "RetrievalSecurityContext",
     "LexicalPrefilterConfig",
     "VectorSearchFilterConfig",
     "AtlasSearchFilterConfig",

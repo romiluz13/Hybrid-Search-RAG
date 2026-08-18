@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+import pytest
+
 from hybridrag.enhancements.filters.atlas_search_filters import (
     AtlasSearchFilterConfig,
     build_atlas_search_filters,
@@ -68,6 +70,18 @@ class TestBuildAtlasSearchFilters:
         values = [c["equals"]["value"] for c in should_clauses]
         assert "tech" in values
         assert "science" in values
+
+    def test_empty_in_filter_is_rejected_instead_of_removed(self) -> None:
+        config = AtlasSearchFilterConfig(in_filters={"tenant": []})
+
+        with pytest.raises(ValueError, match="must not be empty"):
+            build_atlas_search_filters(config)
+
+    def test_range_without_a_bound_is_rejected(self) -> None:
+        config = AtlasSearchFilterConfig(numeric_range_filters={"year": {}})
+
+        with pytest.raises(ValueError, match="at least one bound"):
+            build_atlas_search_filters(config)
 
     def test_nested_field_path_equality(self) -> None:
         """L24: Dotted paths like 'metadata.source' should work in equality filters."""

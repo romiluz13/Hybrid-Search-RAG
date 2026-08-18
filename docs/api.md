@@ -237,7 +237,7 @@ print(f"Ingested {successful}/{len(results)} pages, {total_chunks} total chunks"
   - Access forbidden
   - No pages extracted
 
-##### `query(query: str, mode: Literal["local", "global", "hybrid", "naive", "mix", "bypass"] | None = None, top_k: int | None = None, rerank_top_k: int | None = None, enable_rerank: bool | None = None, only_context: bool = False, system_prompt: str | None = None, stream: bool = False) -> str | AsyncIterator[str]`
+##### `query(query: str, mode=..., top_k=None, rerank_top_k=None, enable_rerank=None, only_context=False, system_prompt=None, stream=False, filter_config=None, fusion_strategy=None, vector_search_mode="ann", rerank_strategy="native", native_rerank_model="rerank-2.5") -> str | AsyncIterator[str]`
 
 Query without conversation memory.
 
@@ -279,6 +279,11 @@ async for chunk in stream:
 - `only_context` (bool): If True, return only context without LLM response
 - `system_prompt` (str | None): Optional system prompt for LLM
 - `stream` (bool): If True, return an async iterator of answer chunks
+- `filter_config` (`FilterConfig | None`): Typed metadata constraints for `naive` retrieval
+- `fusion_strategy` (`"score" | "rank" | None`): Native fusion; omission selects score fusion
+- `vector_search_mode` (`"ann" | "exact"`): Approximate or exact vector execution
+- `rerank_strategy` (`"native" | "external"`): Selected reranking implementation
+- `native_rerank_model` (str): MongoDB native Voyage reranking model
 
 **Returns:** Generated response string, context string, or an async iterator when `stream=True`
 

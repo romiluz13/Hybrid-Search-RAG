@@ -1,7 +1,7 @@
 # ADR-0003: Hybrid Search with $rankFusion
 
 ## Status
-Accepted
+Superseded by ADR-0008
 
 ## Context
 Need to combine vector and keyword search results effectively.

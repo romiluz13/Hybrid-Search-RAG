@@ -7,9 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-19
+
 ### Added
 - Comprehensive cookbook documentation (8 recipes)
 - Production deployment guide with scaling strategies
+- Public metadata ingestion, typed filters, configured dual-index mappings, and server-owned retrieval constraints
+- Native reranking with preserved fusion and rerank scores
+- Exact vector execution, flat/HNSW index planning, quantization, explicit readiness waiting, and rollback
+- Optional MongoDB Automated Embedding for chunk retrieval
+- Redacted server explanations and multi-storage search-index inventory
+- Explicit text-search index planning, application, and rollback
+- Schema-validation desired-versus-effective diagnostics
+
+### Changed
+
+- Score fusion is now the default; rank fusion requires explicit selection.
+- Native reranking is the default when reranking is enabled; external reranking requires explicit selection.
+- Capability support is determined by execution, not numeric server-version gates.
+- Low-level hybrid execution helpers are no longer exported from the package root; use `HybridRAG` query methods for the supported retrieval contract.
+
+### Security
+
+- Retrieval now fails closed instead of dropping filters or substituting rank, manual RRF, vector-only retrieval, or empty context.
+- Query cache identity includes caller filters, server constraints, fusion strategy, vector mode, and native or external reranker identity.
+- Constrained queries skip unscoped implicit entity expansion.
+- Constrained KG retrieval fails closed until graph evidence carries matching provenance.
+- HTTP diagnostics require configured operator authentication and sensitive filters are redacted from parameter logs.
+- UUID and date filter values now use stable BSON representations.
+- HTTP principals resolve to trusted mandatory tenant predicates, and streaming errors no longer expose backend exception text.
 
 ## [0.3.0] - 2025-01-20
 
@@ -125,13 +151,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 0.4.0 | 2026-08-19 | Latest-first fusion, native reranking, typed filters, index lifecycle, Automated Embedding |
 | 0.3.0 | 2025-01-20 | MongoDB 8.2 Lexical Prefilters, voyage-4-large |
 | 0.2.0 | 2025-01-10 | Native $rankFusion, Three Filter Systems |
 | 0.1.0 | 2025-01-01 | Initial release, Core RAG framework |
 
 ---
 
-[Unreleased]: https://github.com/mongodb-developer/HybridRAG/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/mongodb-developer/HybridRAG/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/mongodb-developer/HybridRAG/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/mongodb-developer/HybridRAG/releases/tag/v0.1.0
+[Unreleased]: https://github.com/romiluz13/Hybrid-Search-RAG/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/romiluz13/Hybrid-Search-RAG/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/romiluz13/Hybrid-Search-RAG/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/romiluz13/Hybrid-Search-RAG/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/romiluz13/Hybrid-Search-RAG/releases/tag/v0.1.0

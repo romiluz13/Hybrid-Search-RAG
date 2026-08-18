@@ -118,13 +118,13 @@ Mix mode combines all search modalities for comprehensive retrieval.
 │                                                              │
 │  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐    │
 │  │    HYBRID     │  │    GRAPH      │  │    ENTITY     │    │
-│  │   ($rankFusion) │  │  ($graphLookup)│  │   BOOSTING   │    │
+│  │ (native fusion)│  │  ($graphLookup)│  │   BOOSTING   │    │
 │  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘    │
 │          │                  │                  │             │
 │          └──────────────────┼──────────────────┘             │
 │                             │                                │
 │                    ┌────────▼────────┐                       │
-│                    │   MERGE + RRF   │                       │
+│                    │ MERGE + DEDUP   │                       │
 │                    │   + Dedup       │                       │
 │                    └────────┬────────┘                       │
 │                             │                                │
@@ -142,22 +142,14 @@ Mix mode combines all search modalities for comprehensive retrieval.
 ### Basic Usage
 
 ```python
-from hybridrag.enhancements import mix_mode_search
-
-results = await mix_mode_search(
-    db=db,
-    query="How does MongoDB handle vector search?",
-    query_vector=embedding,  # Pre-computed query embedding
-    top_k=10,
-    query_entities=["MongoDB", "vector search"],  # Optional
+results = await rag.query_data(
+    "How does MongoDB handle vector search?",
+    mode="mix",
+    fusion_strategy="score",
 )
-
-for result in results:
-    print(f"Score: {result.score:.3f}")
-    print(f"Type: {result.search_type}")
-    print(f"Content: {result.content[:100]}...")
-    print(f"Source scores: {result.source_scores}")
 ```
+
+The public path fails explicitly if any requested native or graph branch fails. Low-level helpers do not provide a semantic fallback contract.
 
 ### Configuration
 

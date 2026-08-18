@@ -11,17 +11,17 @@
 
 # MongoDB-Native AI Starter
 
-### **Backend-First • MongoDB 8.2 Native • Hybrid Search • Knowledge Graph**
+### **Backend-First • Latest MongoDB Search • Hybrid Search • Knowledge Graph**
 
 **HybridRAG is a backend-first Python starter for MongoDB-native AI applications with real live validation on a blessed stack.**
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-8.2+-47A248.svg)](https://www.mongodb.com/atlas)
+[![MongoDB](https://img.shields.io/badge/MongoDB-Search-47A248.svg)](https://www.mongodb.com/atlas)
 [![Voyage AI](https://img.shields.io/badge/Voyage_AI-Embeddings-purple.svg)](https://www.voyageai.com/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-[Features](#-features) • [MongoDB 8.2](#-mongodb-82-features) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [Contributing](#-contributing)
+[Features](#-features) • [MongoDB Search](#-latest-mongodb-search) • [Quick Start](#-quick-start) • [Documentation](#-documentation) • [Contributing](#-contributing)
 
 </div>
 
@@ -76,7 +76,7 @@
 | Feature | Description |
 | --------- | ------------- |
 | **Atomic Updates** | Vector + metadata + graph in one transaction |
-| **$rankFusion** | Native MongoDB 8.0+ weighted hybrid search (RRF) |
+| **$rankFusion** | Native weighted reciprocal-rank fusion |
 | **$scoreFusion** | Score-based fusion with normalization |
 | **Knowledge Graph** | Automatic entity & relationship extraction |
 | **Self-Compacting Memory** | Conversations auto-summarize |
@@ -84,7 +84,7 @@
 </td>
 <td width="50%">
 
-### 🚀 MongoDB 8.2 Native
+### 🚀 Latest MongoDB Search
 
 | Feature | Description |
 | --------- | ------------- |
@@ -104,7 +104,7 @@
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  DATABASE         │  EMBEDDINGS       │  LLM             │  SURFACE      │
 │  ────────────     │  ─────────────    │  ────────────    │  ──           │
-│  ✓ MongoDB 8.2+   │  ✓ Voyage AI      │  ✓ OpenAI API    │  ✓ Python API │
+│  ✓ MongoDB Search │  ✓ Voyage AI      │  ✓ OpenAI API    │  ✓ Python API │
 │  ✓ atlas-local    │  ✓ voyage-4-large │  ✓ Compatible    │  ✓ REST API   │
 │  ✓ Atlas cloud    │  ✓ Reranking      │    endpoints     │  ✓ Rich CLI   │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -114,7 +114,7 @@
 
 HybridRAG supports multiple integrations internally, but the public reference path is intentionally narrow:
 
-- **MongoDB:** Atlas 8.2+ or `mongodb/mongodb-atlas-local:preview` on `mongodb://localhost:27018/?directConnection=true`
+- **MongoDB:** a deployment with Search and Vector Search capabilities
 - **Embeddings/Rerank:** Voyage
 - **LLM:** OpenAI API or an OpenAI-compatible endpoint
 - **Product shape:** Python library + FastAPI + CLI
@@ -123,9 +123,9 @@ That is the stack exercised by the release gate. Unsupported capabilities on thi
 
 ---
 
-## 🆕 MongoDB 8.2 Features
+## 🆕 Latest MongoDB Search
 
-HybridRAG is built for **MongoDB 8.2** with native support for the latest search operators.
+HybridRAG probes capabilities by executing them. It does not select behavior from a numeric server-version policy.
 
 ### Three Filter Systems
 
@@ -146,7 +146,7 @@ from hybridrag import (
 )
 ```
 
-### Lexical Prefilters (MongoDB 8.2+)
+### Low-level lexical prefilter builders
 
 **The game-changer**: Apply Atlas Search operators (fuzzy, phrase, wildcard, geo) **BEFORE** vector search.
 
@@ -171,12 +171,8 @@ filter_config = LexicalPrefilterConfig(
     geo_filters=[{"path": "location", "geometry": {"type": "Point", "coordinates": [-73.9, 40.7]}}],
 )
 
-# Use with hybrid search
-results = await rag.query(
-    query="machine learning best practices",
-    mode="hybrid",
-    lexical_filter_config=filter_config,
-)
+# This is a low-level pipeline builder. HybridRAG.query() accepts the
+# backend-neutral FilterConfig documented below, not lexical_filter_config.
 ```
 
 ### Why Lexical Prefilters Matter
@@ -196,9 +192,9 @@ results = await rag.query(
 # $rankFusion and $scoreFusion both expose the combined score via "score".
 OPERATOR_SCORE_FIELDS = {
     "$vectorSearch":        "vectorSearchScore",   # legacy $vectorSearch stage
-    "$search.vectorSearch": "searchScore",         # MongoDB 8.2+ $search.vectorSearch
-    "$rankFusion":          "score",               # MongoDB 8.0+ (also "scoreDetails")
-    "$scoreFusion":         "score",               # MongoDB 8.3+ (also "scoreDetails")
+    "$search.vectorSearch": "searchScore",
+    "$rankFusion":          "score",               # also "scoreDetails"
+    "$scoreFusion":         "score",               # also "scoreDetails"
 }
 ```
 
@@ -208,7 +204,7 @@ OPERATOR_SCORE_FIELDS = {
 
 ```
   ┌─────────────────────────────────────────────────────────────────────┐
-  │                    $rankFusion (MongoDB 8.2 Native)                  │
+  │                    $scoreFusion (default native fusion)             │
   │                                                                      │
   │   ┌───────────────────────┐          ┌───────────────────────┐      │
   │   │    VECTOR PIPELINE    │          │    TEXT PIPELINE      │      │
@@ -263,7 +259,7 @@ make demo                         # starts local MongoDB + runs the showcase
 ```
 
 `make demo` brings up a local MongoDB (`mongodb/mongodb-atlas-local:preview` via
-Docker) and runs the **real** MongoDB 8.2+ native hybrid-search pipeline against
+Docker) and runs the **real** native hybrid-search pipeline against
 seeded data — no Voyage key, no LLM key, no Atlas account. You see:
 
 - `$vectorSearch` — semantic nearest neighbors (cosine)
@@ -344,7 +340,7 @@ The repo is considered publish-ready only when the blessed stack passes:
 
 ```python
 import asyncio
-from hybridrag import create_hybridrag, LexicalPrefilterConfig
+from hybridrag import FilterConfig, FilterPredicate, create_hybridrag
 
 async def main():
     # Initialize
@@ -360,16 +356,21 @@ async def main():
     )
     print(result["answer"])
 
-    # Advanced: Query with lexical prefilters
-    filter_config = LexicalPrefilterConfig(
-        fuzzy_filters=[{"path": "content", "query": "machin lerning", "maxEdits": 2}],
-        range_filters={"timestamp": {"gte": "2024-01-01"}},
+    # Advanced: Query with one backend-neutral metadata filter
+    filter_config = FilterConfig(
+        predicates=[
+            FilterPredicate(
+                field="metadata.category",
+                operator="eq",
+                value="research",
+            )
+        ]
     )
 
     result = await rag.query(
         query="machine learning trends",
-        mode="hybrid",
-        lexical_filter_config=filter_config,
+        mode="naive",
+        filter_config=filter_config,
     )
 
 asyncio.run(main())
@@ -394,13 +395,33 @@ hybridrag benchmark
 
 | Mode | Description | Use Case |
 | ------ | ------------- | ---------- |
-| `mix` | KG + Vector + Keyword | **Recommended** - General queries |
-| `hybrid` | Vector + Keyword ($rankFusion) | Fast hybrid search |
+| `mix` | KG + vector/keyword fusion | **Recommended** - General queries |
+| `hybrid` | Local + global KG retrieval | Entity facts plus overview |
 | `local` | Entity-focused retrieval | Specific entities |
-| `global` | Community summaries | High-level overview |
-| `naive` | Vector search only | Simple similarity |
+| `global` | Relationship-focused retrieval | High-level overview |
+| `naive` | Vector + keyword fusion, no KG | Filtered document retrieval |
+| `bypass` | No retrieval | Direct LLM queries |
 
 ---
+
+## Supported capability surface
+
+- Six query modes: `local`, `global`, `hybrid`, `mix`, `naive`, and `bypass`
+- MongoDB score fusion by default, with rank fusion as an explicit option
+- Native reranking with preserved fusion and rerank scores
+- ANN and exact vector execution
+- Backend-neutral metadata filters for `naive` retrieval
+- Operator-authenticated query explanation and search-index readiness diagnostics
+- Explicit all-index plan/apply/wait/rollback operations; startup does not mutate search indexes
+- Optional MongoDB Automated Embedding for chunk retrieval
+- Knowledge-graph entity/relationship extraction and visualization
+- Conversation memory with compaction
+- CLI, REST APIs, Chainlit UI, and an Ollama-compatible API
+- RAGAS evaluation and Langfuse observability
+- Namespace isolation, schema-validation migration, and cache maintenance tools
+- Multiple production LLM providers plus engine-level bindings
+
+Preview or beta maturity does not exclude a capability. Unsupported capabilities fail explicitly. Backup, monitoring, security, administration, and production index authorization remain deployment responsibilities.
 
 ## 🏗️ Architecture
 
@@ -410,7 +431,7 @@ hybridrag benchmark
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
 │  ┌────────────────┐  ┌────────────────┐  ┌────────────────────────────┐ │
-│  │   Voyage AI    │  │  Claude/GPT/   │  │      MongoDB Atlas 8.2     │ │
+│  │   Voyage AI    │  │  Claude/GPT/   │  │      MongoDB Search        │ │
 │  │   Embeddings   │  │    Gemini      │  │                            │ │
 │  │   + Reranking  │  │                │  │  ┌──────────────────────┐  │ │
 │  └────────────────┘  └────────────────┘  │  │ $rankFusion          │  │ │
@@ -422,8 +443,8 @@ hybridrag benchmark
 ├─────────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────────────────────────┐│
 │  │                         FILTER SYSTEMS                              ││
-│  │  VectorSearchFilterConfig │ AtlasSearchFilterConfig │ LexicalPrefilter││
-│  │  (MQL: $eq, $gte, $in)    │ (Atlas: range, equals)  │ (fuzzy,phrase) ││
+│  │  Public FilterConfig → backend-specific MongoDB translators             ││
+│  │  (Vector MQL)       │ (Atlas Search)       │ (Lexical prefilters)       ││
 │  └─────────────────────────────────────────────────────────────────────┘│
 ├─────────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────────────────────────┐│
@@ -448,6 +469,9 @@ hybridrag benchmark
 | [Installation Guide](docs/installation.md) | Setup and configuration |
 | [Architecture Decisions](docs/adr/) | ADRs for key decisions |
 | [Enhanced Search](docs/enhanced-search.md) | Graph traversal, mix mode |
+| [Search Capability Guide](docs/capability-guide.md) | Filters, fusion, diagnostics, index safety |
+| [Capability Catalog](docs/capabilities.md) | Supported, gated, monitored, and deployment-owned features |
+| [Accepted Capability Roadmap](docs/specs/hybridrag-capability-roadmap.md) | Scope, contracts, and testing decisions |
 | [Notebooks](notebooks/) | Interactive tutorials (5) |
 | [Examples](examples/) | Code examples (8) |
 
@@ -455,8 +479,8 @@ hybridrag benchmark
 
 | Recipe | Topic | Description |
 | -------- | ------- | ------------- |
-| [01](docs/cookbook/01-hybrid-search.md) | Hybrid Search | MongoDB $rankFusion implementation |
-| [02](docs/cookbook/02-lexical-prefilters.md) | Lexical Prefilters | MongoDB 8.2 fuzzy/phrase/wildcard/geo |
+| [01](docs/cookbook/01-hybrid-search.md) | Hybrid Search | MongoDB $scoreFusion and $rankFusion |
+| [02](docs/cookbook/02-lexical-prefilters.md) | Lexical Prefilters | Fuzzy/phrase/wildcard/geo builders |
 | [03](docs/cookbook/03-conversation-memory.md) | Conversation Memory | Multi-turn chat with self-compaction |
 | [04](docs/cookbook/04-vector-search-optimization.md) | Vector Optimization | numCandidates, quantization, tuning |
 | [05](docs/cookbook/05-knowledge-graph.md) | Knowledge Graph | $graphLookup for entity relationships |
@@ -532,12 +556,10 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 
 ---
 
-<div align="center">
-
-```
+```text
 ╔═══════════════════════════════════════════════════════════════════════════╗
 ║                                                                           ║
-║   MongoDB 8.0+ Native: $rankFusion • $scoreFusion(8.3+) • $search.vectorSearch   ║
+║   MongoDB Native: $scoreFusion • $rankFusion • $rerank • Vector Search          ║
 ║                                                                           ║
 ║   Three Filter Systems: Vector (MQL) • Atlas • Lexical Prefilters         ║
 ║                                                                           ║
@@ -546,8 +568,6 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 ╚═══════════════════════════════════════════════════════════════════════════╝
 ```
 
-**Built with MongoDB 8.2 • Voyage AI • Claude**
+### Built with MongoDB Search • Voyage AI • Claude
 
-[⬆ Back to Top](#)
-
-</div>
+[⬆ Back to Top](#mongodb-native-ai-starter)
