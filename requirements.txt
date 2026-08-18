@@ -42,7 +42,7 @@ tavily-python>=0.3.0
 ascii_colors>=0.11.0
 fastapi>=0.109.0
 PyJWT>=2.8.0
-python-multipart>=0.0.9
+python-multipart>=0.0.18
 uvicorn>=0.27.0
 
 # Observability (Langfuse)

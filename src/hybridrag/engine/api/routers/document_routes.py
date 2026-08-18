@@ -22,6 +22,12 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from hybridrag.engine.security import (
+    get_request_security_context,
+    require_document_ownership,
+    require_unscoped_document_operation,
+    scope_document_metadata,
+)
 from hybridrag.enhancements.filters.metadata import (
     normalize_document_metadata,
     normalize_metadata_batch,
@@ -2237,7 +2243,10 @@ def create_document_routes(
                 [request.text],
                 file_sources=[request.file_source],
                 track_id=track_id,
-                metadata=[request.metadata] if request.metadata is not None else None,
+                metadata=scope_document_metadata(
+                    [request.metadata] if request.metadata is not None else None,
+                    1,
+                ),
             )
 
             return InsertResponse(
@@ -2321,7 +2330,7 @@ def create_document_routes(
                 request.texts,
                 file_sources=request.file_sources,
                 track_id=track_id,
-                metadata=request.metadata,
+                metadata=scope_document_metadata(request.metadata, len(request.texts)),
             )
 
             return InsertResponse(
@@ -2355,9 +2364,14 @@ def create_document_routes(
                   of deleted files and any errors encountered.
 
         Raises:
-            HTTPException: Raised when a serious error occurs during the clearing process,
-                          with status code 500 and error details in the detail field.
+            HTTPException: With status 403 for a scoped principal, or status 500
+                when a serious clearing error occurs.
         """
+        try:
+            require_unscoped_document_operation()
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
+
         from .kg.shared_storage import (
             get_namespace_data,
             get_namespace_lock,
@@ -2774,9 +2788,21 @@ def create_document_routes(
 
         Raises:
             HTTPException:
+              - 403: Tenant ownership configuration is invalid.
+              - 404: A requested document is absent or belongs to another tenant.
               - 500: If an unexpected internal error occurs during initialization.
         """
         doc_ids = delete_request.doc_ids
+
+        try:
+            security_context = get_request_security_context()
+            for doc_id in doc_ids:
+                document = await rag.doc_status.get_by_id(doc_id)
+                require_document_ownership(document, security_context)
+        except PermissionError:
+            raise HTTPException(status_code=404, detail="Document not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from None
 
         try:
             from .kg.shared_storage import (

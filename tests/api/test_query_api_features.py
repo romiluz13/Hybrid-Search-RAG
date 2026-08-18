@@ -166,6 +166,40 @@ def test_ingest_api_forwards_per_document_metadata(monkeypatch):
     ]
 
 
+def test_ingest_api_stamps_authenticated_tenant_metadata(monkeypatch):
+    fake_rag = _FakeRAG()
+
+    async def _fake_create_hybridrag(auto_initialize: bool = True):
+        return fake_rag
+
+    monkeypatch.setattr(api_main, "create_hybridrag", _fake_create_hybridrag)
+    monkeypatch.setenv("HYBRIDRAG_API_KEY", "tenant-a-key")
+    monkeypatch.setenv("HYBRIDRAG_TENANT_FIELD", "metadata.tenant_id")
+    monkeypatch.setenv(
+        "HYBRIDRAG_API_KEY_TENANTS",
+        json.dumps({"tenant-a-key": "tenant-a"}),
+    )
+
+    with TestClient(api_main.create_app()) as client:
+        response = client.post(
+            "/v1/ingest",
+            headers={"X-API-Key": "tenant-a-key"},
+            json={
+                "documents": ["first", "second"],
+                "metadata": [
+                    {"category": "docs", "tenant_id": "tenant-b"},
+                    {"category": "guides"},
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    assert fake_rag.insert_calls[0]["metadata"] == [
+        {"category": "docs", "tenant_id": "tenant-a"},
+        {"category": "guides", "tenant_id": "tenant-a"},
+    ]
+
+
 def test_query_api_includes_references_when_requested(monkeypatch):
     fake_rag = _FakeRAG()
 
@@ -503,6 +537,43 @@ def test_engine_jwt_binds_principal_to_mandatory_tenant_filter(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["predicates"][0] == {
+        "field": "metadata.tenant_id",
+        "operator": "eq",
+        "value": "tenant-a",
+    }
+
+
+def test_engine_whitelist_cannot_bypass_tenant_scoped_retrieval(monkeypatch):
+    from hybridrag.engine.api import utils_api
+    from hybridrag.engine.security import get_request_security_context
+
+    monkeypatch.setattr(utils_api, "whitelist_patterns", [("/api", True)])
+    monkeypatch.setattr(utils_api, "auth_configured", False)
+    monkeypatch.setenv("HYBRIDRAG_TENANT_FIELD", "metadata.tenant_id")
+    monkeypatch.setenv(
+        "HYBRIDRAG_API_KEY_TENANTS",
+        json.dumps({"tenant-a-key": "tenant-a"}),
+    )
+
+    app = FastAPI()
+    auth_dependency = utils_api.get_combined_auth_dependency("tenant-a-key")
+
+    @app.post("/api/chat", dependencies=[Depends(auth_dependency)])
+    async def chat():
+        context = get_request_security_context()
+        assert context is not None
+        return context.mandatory_filter.model_dump(mode="json")
+
+    with TestClient(app) as client:
+        forbidden = client.post("/api/chat")
+        allowed = client.post(
+            "/api/chat",
+            headers={"X-API-Key": "tenant-a-key"},
+        )
+
+    assert forbidden.status_code == 403
+    assert allowed.status_code == 200
+    assert allowed.json()["predicates"][0] == {
         "field": "metadata.tenant_id",
         "operator": "eq",
         "value": "tenant-a",

@@ -316,23 +316,32 @@ results = await vector_search_with_lexical_prefilters(
 )
 ```
 
-### Hybrid Search with Lexical Prefilters
+### Hybrid Search with Metadata Filters
 
 ```python
-from hybridrag.enhancements import hybrid_search_with_rank_fusion
+from hybridrag.enhancements.filters import FilterConfig, FilterPredicate
 
-# Lexical prefilters work within $rankFusion
-results = await hybrid_search_with_rank_fusion(
-    collection=chunks_collection,
-    query_text=user_query,
-    query_vector=query_embedding,
+# Application hybrid retrieval uses one filter contract for both branches.
+results = await rag.query_data(
+    user_query,
+    mode="naive",
     top_k=10,
-    config=MongoDBHybridSearchConfig(use_lexical_prefilters=True),
-    lexical_filter_config=LexicalPrefilterConfig(
-        fuzzy_filters=[{"path": "title", "query": user_query, "maxEdits": 2}]
-    )
+    fusion_strategy="score",
+    filter_config=FilterConfig(
+        predicates=[
+            FilterPredicate(
+                field="metadata.category",
+                operator="eq",
+                value="documentation",
+            )
+        ]
+    ),
 )
 ```
+
+The lower-level lexical-prefilter helper remains useful for a standalone vector
+pipeline. The legacy hybrid helper rejects branch-specific filters because they
+can produce different evidence sets across vector and text retrieval.
 
 ## Index Requirements
 

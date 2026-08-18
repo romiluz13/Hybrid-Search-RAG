@@ -19,7 +19,18 @@ def normalize_document_metadata(
     metadata: Mapping[str, Any],
     field_types: Mapping[str, str] | None = None,
 ) -> DocumentMetadata:
-    """Validate and normalize one document's public metadata."""
+    """Validate and normalize one document's public metadata.
+
+    Args:
+        metadata: Caller-provided metadata fields.
+        field_types: Configured Search mapping types keyed by metadata path.
+
+    Returns:
+        Metadata normalized to stable BSON-compatible values.
+
+    Raises:
+        ValueError: If a key, value, or configured mapping is invalid.
+    """
 
     if len(metadata) > 32:
         raise ValueError("Document metadata supports at most 32 fields")
@@ -60,7 +71,19 @@ def normalize_metadata_batch(
     document_count: int,
     field_types: Mapping[str, str] | None = None,
 ) -> list[DocumentMetadata] | None:
-    """Validate metadata cardinality and each document metadata object."""
+    """Validate metadata cardinality and each document metadata object.
+
+    Args:
+        metadata: One metadata mapping per document, or ``None``.
+        document_count: Number of documents in the ingestion request.
+        field_types: Configured Search mapping types keyed by metadata path.
+
+    Returns:
+        Normalized metadata in document order, or ``None``.
+
+    Raises:
+        ValueError: If cardinality or a metadata value is invalid.
+    """
 
     if metadata is None:
         return None

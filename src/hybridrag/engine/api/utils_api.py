@@ -106,6 +106,13 @@ def get_combined_auth_dependency(api_key: str | None = None):
             if (is_prefix and path.startswith(pattern)) or (
                 not is_prefix and path == pattern
             ):
+                # scar: 2026-08-19 — /api/* exposed unscoped Ollama retrieval.
+                if os.environ.get("HYBRIDRAG_TENANT_FIELD") and (
+                    path == "/query"
+                    or path.startswith("/query/")
+                    or path.startswith("/api/")
+                ):
+                    break
                 token_handle = set_request_security_context(None)
                 try:
                     yield

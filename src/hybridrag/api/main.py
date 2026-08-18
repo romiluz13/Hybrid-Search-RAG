@@ -33,6 +33,7 @@ from ..engine.exceptions import (
 from ..engine.security import (
     api_key_security_context,
     reset_request_security_context,
+    scope_document_metadata,
     set_request_security_context,
 )
 from .models import (
@@ -308,7 +309,10 @@ def register_routes(app: FastAPI) -> None:
             await rag.insert(
                 documents=request.documents,
                 ids=request.ids,
-                metadata=request.metadata,
+                metadata=scope_document_metadata(
+                    request.metadata,
+                    len(request.documents),
+                ),
             )
 
             return IngestResponse(
@@ -585,6 +589,8 @@ def register_routes(app: FastAPI) -> None:
         try:
             await rag.delete_document(doc_id)
             return {"status": "deleted", "doc_id": doc_id}
+        except PermissionError:
+            raise HTTPException(status_code=404, detail="Document not found") from None
         except Exception as e:
             # M34: Do not leak internal exception details to API callers
             logger.error(f"Delete error for doc_id={doc_id}: {e}", exc_info=True)

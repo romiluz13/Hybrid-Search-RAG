@@ -124,7 +124,18 @@ def _redact_query_vectors(value: Any) -> Any:
 
 
 def search_index_definition_satisfies(actual: Any, desired: Any) -> bool:
-    """Compare server-normalized definitions while tolerating added defaults."""
+    """Compare a server-normalized index definition with its desired subset.
+
+    Args:
+        actual: Definition returned by MongoDB.
+        desired: Definition explicitly requested by the client.
+
+    Returns:
+        ``True`` when every desired value is present in the observed definition.
+
+    Raises:
+        TypeError: If recursive values cannot be compared for equality.
+    """
     if isinstance(desired, dict):
         return isinstance(actual, dict) and all(
             key in actual and search_index_definition_satisfies(actual[key], expected)

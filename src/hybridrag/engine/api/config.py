@@ -399,7 +399,7 @@ def parse_args() -> argparse.Namespace:
     args.cors_origins = get_env_value("CORS_ORIGINS", "*")
     args.summary_language = get_env_value("SUMMARY_LANGUAGE", DEFAULT_SUMMARY_LANGUAGE)
     args.entity_types = get_env_value("ENTITY_TYPES", DEFAULT_ENTITY_TYPES, list)
-    args.whitelist_paths = get_env_value("WHITELIST_PATHS", "/health,/api/*")
+    args.whitelist_paths = get_env_value("WHITELIST_PATHS", "/health")
 
     # For JWT Auth
     args.auth_accounts = get_env_value("AUTH_ACCOUNTS", "")

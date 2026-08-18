@@ -340,6 +340,68 @@ async def test_engine_api_text_pipeline_forwards_document_metadata() -> None:
     )
 
 
+def test_tenant_metadata_scope_is_server_owned(monkeypatch) -> None:
+    from hybridrag.engine.security import (
+        api_key_security_context,
+        scope_document_metadata,
+    )
+
+    monkeypatch.setenv("HYBRIDRAG_TENANT_FIELD", "metadata.tenant_id")
+    monkeypatch.setenv(
+        "HYBRIDRAG_API_KEY_TENANTS",
+        '{"tenant-a-key":"tenant-a"}',
+    )
+    context = api_key_security_context("tenant-a-key")
+
+    scoped = scope_document_metadata(
+        [{"tenant_id": "tenant-b"}, {"category": "docs"}],
+        2,
+        context,
+    )
+
+    assert scoped == [
+        {"tenant_id": "tenant-a"},
+        {"category": "docs", "tenant_id": "tenant-a"},
+    ]
+
+
+def test_document_ownership_rejects_another_tenant(monkeypatch) -> None:
+    from hybridrag.engine.security import (
+        api_key_security_context,
+        require_document_ownership,
+    )
+
+    monkeypatch.setenv("HYBRIDRAG_TENANT_FIELD", "metadata.tenant_id")
+    monkeypatch.setenv(
+        "HYBRIDRAG_API_KEY_TENANTS",
+        '{"tenant-a-key":"tenant-a"}',
+    )
+    context = api_key_security_context("tenant-a-key")
+
+    with pytest.raises(PermissionError, match="not found"):
+        require_document_ownership(
+            {"metadata": {"tenant_id": "tenant-b"}},
+            context,
+        )
+
+
+def test_tenant_principal_cannot_run_global_document_mutation(monkeypatch) -> None:
+    from hybridrag.engine.security import (
+        api_key_security_context,
+        require_unscoped_document_operation,
+    )
+
+    monkeypatch.setenv("HYBRIDRAG_TENANT_FIELD", "metadata.tenant_id")
+    monkeypatch.setenv(
+        "HYBRIDRAG_API_KEY_TENANTS",
+        '{"tenant-a-key":"tenant-a"}',
+    )
+    context = api_key_security_context("tenant-a-key")
+
+    with pytest.raises(PermissionError, match="global document operation"):
+        require_unscoped_document_operation(context)
+
+
 def test_engine_api_maps_typed_retrieval_errors() -> None:
     capability = engine_query_routes._query_http_exception(
         RetrievalCapabilityError("score fusion is unavailable")

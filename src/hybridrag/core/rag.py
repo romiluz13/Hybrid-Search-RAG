@@ -2149,8 +2149,16 @@ Provide a helpful, comprehensive answer."""
 
         Args:
             doc_id: Document ID to delete
+
+        Raises:
+            PermissionError: If the scoped principal does not own the document.
+            ValueError: If tenant ownership configuration is invalid.
         """
         rag = self._ensure_initialized()
+        from hybridrag.engine.security import require_document_ownership
+
+        document = await rag.doc_status.get_by_id(doc_id)
+        require_document_ownership(document, self.retrieval_security_context)
         await rag.adelete_by_doc_id(doc_id)
 
     def _require_chunk_storage_method(self, method_name: str) -> Callable[..., Any]:
