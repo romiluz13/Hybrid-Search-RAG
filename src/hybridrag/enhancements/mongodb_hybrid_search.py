@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import pymongo.errors
@@ -172,6 +172,16 @@ class MongoDBHybridSearchConfig:
     text_weight: float = 0.4  # Weight for text search in score fusion
     use_rank_fusion: bool = False  # Use $rankFusion (RRF) instead of $scoreFusion
 
+    # Per-branch over-fetch for $rankFusion / $scoreFusion input pipelines.
+    # Inspired by the Anthropic CMA cookbook: each branch over-fetches so the
+    # fusion stage has more candidates to rank, improving result quality for
+    # small top_k values.  The branch limit is computed as:
+    #   max(top_k * branch_overfetch_factor, branch_overfetch_floor)
+    # Previous default was top_k * 2 (factor=2, floor=0).  The new defaults
+    # (factor=4, floor=20) match the cookbook's proven heuristic.
+    branch_overfetch_factor: int = 4
+    branch_overfetch_floor: int = 20
+
     # Document lookup settings
     documents_collection: str = "documents"  # Collection for document metadata
     enable_document_lookup: bool = True  # Join with documents for metadata
@@ -194,6 +204,14 @@ class MongoDBHybridSearchConfig:
             raise RetrievalValidationError(
                 "vector_num_candidates must produce numCandidates between 1 and 10000"
             )
+        if self.branch_overfetch_factor < 1:
+            raise RetrievalValidationError(
+                "branch_overfetch_factor must be >= 1"
+            )
+        if self.branch_overfetch_floor < 0:
+            raise RetrievalValidationError(
+                "branch_overfetch_floor must be >= 0"
+            )
 
     def get_search_paths(self) -> list[str]:
         """Get list of search paths."""
@@ -202,6 +220,21 @@ class MongoDBHybridSearchConfig:
         if isinstance(self.text_search_path, list):
             return self.text_search_path
         return [self.text_search_path]
+
+    def branch_limit(self, top_k: int) -> int:
+        """Compute the per-branch over-fetch limit for fusion input pipelines.
+
+        Uses ``max(top_k * branch_overfetch_factor, branch_overfetch_floor)``
+        so small ``top_k`` values still feed the fusion stage enough candidates
+        to produce high-quality ranked results.
+
+        Args:
+            top_k: The final number of results requested by the caller.
+
+        Returns:
+            The ``$limit`` value to use inside each fusion input branch.
+        """
+        return max(top_k * self.branch_overfetch_factor, self.branch_overfetch_floor)
 
 
 async def create_text_search_index_if_not_exists(
@@ -323,11 +356,18 @@ async def hybrid_search_with_rank_fusion(
         f"text_filtered={atlas_filter_config is not None}"
     )
 
-    # Calculate dynamic numCandidates (MongoDB best practice: 10-20x limit)
+    # Calculate numCandidates from the branch limit (not top_k) so the
+    # 10-20x ratio is maintained relative to the actual $vectorSearch limit.
+    # MongoDB docs: "You can't specify a number less than the number of
+    # documents to return (limit)." and "We recommend that you specify a
+    # number at least 20 times higher than the number of documents to
+    # return (limit)."
+    # Ref: https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-stage/
+    branch_lim = config.branch_limit(top_k)
     num_candidates = (
         config.vector_num_candidates
         if config.vector_num_candidates is not None
-        else calculate_num_candidates(top_k)
+        else calculate_num_candidates(branch_lim)
     )
 
     # Build vector search stage
@@ -345,7 +385,7 @@ async def hybrid_search_with_rank_fusion(
                     "queryVector": query_vector,
                     "path": config.vector_path,
                     "numCandidates": num_candidates,
-                    "limit": top_k * 2,
+                    "limit": branch_lim,
                 },
             }
         }
@@ -364,7 +404,7 @@ async def hybrid_search_with_rank_fusion(
             "path": config.vector_path,
             "queryVector": query_vector,
             "numCandidates": num_candidates,
-            "limit": top_k * 2,
+            "limit": branch_lim,
         }
 
         # Add vector prefilters if provided
@@ -380,7 +420,7 @@ async def hybrid_search_with_rank_fusion(
     # M16: Add explicit $limit to vector pipeline for $rankFusion
     # Per mongodb-search-and-ai skill: "$search does not auto-limit results --
     # always add $limit inside the input pipeline"
-    vector_pipeline.append({"$limit": top_k * 2})
+    vector_pipeline.append({"$limit": branch_lim})
 
     # Build text search stage with compound query
     text_clause: dict[str, Any] = {
@@ -419,7 +459,7 @@ async def hybrid_search_with_rank_fusion(
                                     "compound": compound_query,
                                 }
                             },
-                            {"$limit": top_k * 2},
+                            {"$limit": branch_lim},
                         ],
                     }
                 },
@@ -528,11 +568,14 @@ async def hybrid_search_with_score_fusion(
     if config is None:
         config = MongoDBHybridSearchConfig()
 
-    # Calculate dynamic numCandidates (MongoDB best practice: 10-20x limit)
+    # Calculate numCandidates from the branch limit (not top_k) so the
+    # 10-20x ratio is maintained relative to the actual $vectorSearch limit.
+    # Ref: https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-stage/
+    branch_lim = config.branch_limit(top_k)
     num_candidates = (
         config.vector_num_candidates
         if config.vector_num_candidates is not None
-        else calculate_num_candidates(top_k)
+        else calculate_num_candidates(branch_lim)
     )
 
     logger.info(
@@ -555,7 +598,7 @@ async def hybrid_search_with_score_fusion(
                                     "path": config.vector_path,
                                     "queryVector": query_vector,
                                     "numCandidates": num_candidates,
-                                    "limit": top_k * 2,
+                                    "limit": branch_lim,
                                 }
                             }
                         ],
@@ -570,7 +613,7 @@ async def hybrid_search_with_score_fusion(
                                     },
                                 }
                             },
-                            {"$limit": top_k * 2},
+                            {"$limit": branch_lim},
                         ],
                     },
                     # Sigmoid normalization for score scaling (must be inside input)
@@ -1066,8 +1109,9 @@ async def manual_hybrid_search_with_rrf(
         f"query='{query_text[:50]}...', top_k={top_k}"
     )
 
-    # Over-fetch for better RRF results (2x requested count)
-    fetch_count = top_k * 2
+    # Over-fetch for better RRF fusion results
+    # Uses the same branch_limit heuristic as $rankFusion / $scoreFusion
+    fetch_count = config.branch_limit(top_k)
 
     # Run both searches concurrently for performance
     vector_results, text_results = await asyncio.gather(
@@ -1469,8 +1513,11 @@ class MongoDBHybridSearcher:
         collection_name = self._get_collection_name(namespace)
         collection = self.db[collection_name]
 
-        # Update config with workspace-specific index names
-        config = MongoDBHybridSearchConfig(
+        # Update config with workspace-specific index names while
+        # preserving all other settings from self.config (vector_path,
+        # num_candidates, over-fetch, fuzzy, prefilter, etc.).
+        config = replace(
+            self.config,
             vector_index_name=(
                 f"vector_knn_index_{collection_name}"
                 if self.workspace
@@ -1481,9 +1528,6 @@ class MongoDBHybridSearcher:
                 if self.workspace
                 else f"text_search_index_{namespace}"
             ),
-            vector_weight=self.config.vector_weight,
-            text_weight=self.config.text_weight,
-            cosine_threshold=self.config.cosine_threshold,
         )
 
         if use_rank_fusion:

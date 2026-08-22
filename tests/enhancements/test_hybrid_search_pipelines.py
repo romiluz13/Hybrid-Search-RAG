@@ -429,3 +429,259 @@ class TestC7ScoreFusionNormalization:
                 ]
             },
         }
+
+
+# ---------------------------------------------------------------------------
+# Per-branch over-fetch floor (inspired by Anthropic CMA cookbook)
+# ---------------------------------------------------------------------------
+
+
+class TestBranchOverfetchFloor:
+    """Verify that $rankFusion / $scoreFusion input pipelines over-fetch
+    using ``max(top_k * branch_overfetch_factor, branch_overfetch_floor)``.
+
+    The previous behavior was ``top_k * 2``, which starved the fusion stage
+    for small ``top_k`` values (e.g. top_k=3 → only 6 candidates per branch).
+    The new defaults (factor=4, floor=20) match the Anthropic cookbook's
+    proven heuristic, ensuring at least 20 candidates per branch.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rank_fusion_uses_overfetch_floor_for_small_top_k(self):
+        """For top_k=3, branch limit should be max(3*4, 20) = 20, not 6."""
+        from hybridrag.enhancements.mongodb_hybrid_search import (
+            hybrid_search_with_rank_fusion,
+        )
+
+        collection, _ = _make_mock_collection()
+        await hybrid_search_with_rank_fusion(
+            collection=collection,
+            query_text="test query",
+            query_vector=[0.1] * 1024,
+            top_k=3,
+        )
+
+        pipeline = collection.aggregate.call_args[0][0]
+        rank_fusion_stage = next(s for s in pipeline if "$rankFusion" in s)
+        branches = rank_fusion_stage["$rankFusion"]["input"]["pipelines"]
+
+        # Check each branch's $limit or $vectorSearch.limit
+        for branch_name, branch_pipeline in branches.items():
+            limit_val = self._extract_branch_limit(branch_pipeline)
+            assert limit_val == 20, (
+                f"Branch '{branch_name}' limit should be 20 for top_k=3, "
+                f"got {limit_val}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_score_fusion_uses_overfetch_floor_for_small_top_k(self):
+        """For top_k=3, branch limit should be max(3*4, 20) = 20, not 6."""
+        from hybridrag.enhancements.mongodb_hybrid_search import (
+            hybrid_search_with_score_fusion,
+        )
+
+        collection, _ = _make_mock_collection()
+        await hybrid_search_with_score_fusion(
+            collection=collection,
+            query_text="test query",
+            query_vector=[0.1] * 1024,
+            top_k=3,
+        )
+
+        pipeline = collection.aggregate.call_args[0][0]
+        score_fusion_stage = next(s for s in pipeline if "$scoreFusion" in s)
+        branches = score_fusion_stage["$scoreFusion"]["input"]["pipelines"]
+
+        for branch_name, branch_pipeline in branches.items():
+            limit_val = self._extract_branch_limit(branch_pipeline)
+            assert limit_val == 20, (
+                f"Branch '{branch_name}' limit should be 20 for top_k=3, "
+                f"got {limit_val}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_rank_fusion_overfetch_for_large_top_k(self):
+        """For top_k=10, branch limit should be max(10*4, 20) = 40."""
+        from hybridrag.enhancements.mongodb_hybrid_search import (
+            hybrid_search_with_rank_fusion,
+        )
+
+        collection, _ = _make_mock_collection()
+        await hybrid_search_with_rank_fusion(
+            collection=collection,
+            query_text="test query",
+            query_vector=[0.1] * 1024,
+            top_k=10,
+        )
+
+        pipeline = collection.aggregate.call_args[0][0]
+        rank_fusion_stage = next(s for s in pipeline if "$rankFusion" in s)
+        branches = rank_fusion_stage["$rankFusion"]["input"]["pipelines"]
+
+        for branch_name, branch_pipeline in branches.items():
+            limit_val = self._extract_branch_limit(branch_pipeline)
+            assert limit_val == 40, (
+                f"Branch '{branch_name}' limit should be 40 for top_k=10, "
+                f"got {limit_val}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_rank_fusion_overfetch_configurable(self):
+        """Custom branch_overfetch_factor and floor should propagate."""
+        from hybridrag.enhancements.mongodb_hybrid_search import (
+            MongoDBHybridSearchConfig,
+            hybrid_search_with_rank_fusion,
+        )
+
+        collection, _ = _make_mock_collection()
+        config = MongoDBHybridSearchConfig(
+            branch_overfetch_factor=3,
+            branch_overfetch_floor=15,
+        )
+        await hybrid_search_with_rank_fusion(
+            collection=collection,
+            query_text="test query",
+            query_vector=[0.1] * 1024,
+            top_k=10,
+            config=config,
+        )
+
+        pipeline = collection.aggregate.call_args[0][0]
+        rank_fusion_stage = next(s for s in pipeline if "$rankFusion" in s)
+        branches = rank_fusion_stage["$rankFusion"]["input"]["pipelines"]
+
+        # max(10*3, 15) = 30
+        for branch_name, branch_pipeline in branches.items():
+            limit_val = self._extract_branch_limit(branch_pipeline)
+            assert limit_val == 30, (
+                f"Branch '{branch_name}' limit should be 30 for "
+                f"factor=3, floor=15, top_k=10, got {limit_val}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_overfetch_floor_zero_preserves_old_behavior(self):
+        """Setting factor=2, floor=0 should produce top_k * 2 (old behavior)."""
+        from hybridrag.enhancements.mongodb_hybrid_search import (
+            MongoDBHybridSearchConfig,
+            hybrid_search_with_rank_fusion,
+        )
+
+        collection, _ = _make_mock_collection()
+        config = MongoDBHybridSearchConfig(
+            branch_overfetch_factor=2,
+            branch_overfetch_floor=0,
+        )
+        await hybrid_search_with_rank_fusion(
+            collection=collection,
+            query_text="test query",
+            query_vector=[0.1] * 1024,
+            top_k=10,
+            config=config,
+        )
+
+        pipeline = collection.aggregate.call_args[0][0]
+        rank_fusion_stage = next(s for s in pipeline if "$rankFusion" in s)
+        branches = rank_fusion_stage["$rankFusion"]["input"]["pipelines"]
+
+        for branch_name, branch_pipeline in branches.items():
+            limit_val = self._extract_branch_limit(branch_pipeline)
+            assert limit_val == 20, (
+                f"Branch '{branch_name}' limit should be 20 (10*2) for "
+                f"factor=2, floor=0, top_k=10, got {limit_val}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_manual_rrf_uses_branch_limit(self):
+        """manual_hybrid_search_with_rrf should use config.branch_limit for fetch_count."""
+        from hybridrag.enhancements import mongodb_hybrid_search
+        from hybridrag.enhancements.mongodb_hybrid_search import (
+            MongoDBHybridSearchConfig,
+        )
+
+        # Capture the top_k passed to vector_only_search and text_only_search
+        captured_top_ks: list[int] = []
+
+        async def fake_vector_search(
+            collection, query_vector, top_k, config=None, db=None, **kw
+        ):
+            captured_top_ks.append(top_k)
+            return []
+
+        async def fake_text_search(
+            collection, query_text, top_k, config=None, db=None, **kw
+        ):
+            captured_top_ks.append(top_k)
+            return []
+
+        # Use monkeypatch via direct attribute set (restored by test isolation)
+        orig_v = mongodb_hybrid_search.vector_only_search
+        orig_t = mongodb_hybrid_search.text_only_search
+        mongodb_hybrid_search.vector_only_search = fake_vector_search
+        mongodb_hybrid_search.text_only_search = fake_text_search
+
+        try:
+            config = MongoDBHybridSearchConfig(
+                branch_overfetch_factor=4,
+                branch_overfetch_floor=20,
+            )
+            await mongodb_hybrid_search.manual_hybrid_search_with_rrf(
+                collection=AsyncMock(),
+                query_text="test query",
+                query_vector=[0.1] * 1024,
+                top_k=5,
+                config=config,
+            )
+            # fetch_count should be max(5*4, 20) = 20
+            assert all(t == 20 for t in captured_top_ks), (
+                f"Expected fetch_count=20 for top_k=5 with factor=4, floor=20, "
+                f"got {captured_top_ks}"
+            )
+        finally:
+            mongodb_hybrid_search.vector_only_search = orig_v
+            mongodb_hybrid_search.text_only_search = orig_t
+
+    def test_config_rejects_invalid_overfetch_factor(self):
+        """branch_overfetch_factor < 1 should raise."""
+        from hybridrag.enhancements.mongodb_hybrid_search import (
+            MongoDBHybridSearchConfig,
+        )
+
+        with pytest.raises(
+            RetrievalValidationError, match="branch_overfetch_factor"
+        ):
+            MongoDBHybridSearchConfig(branch_overfetch_factor=0)
+
+    def test_config_rejects_negative_overfetch_floor(self):
+        """branch_overfetch_floor < 0 should raise."""
+        from hybridrag.enhancements.mongodb_hybrid_search import (
+            MongoDBHybridSearchConfig,
+        )
+
+        with pytest.raises(
+            RetrievalValidationError, match="branch_overfetch_floor"
+        ):
+            MongoDBHybridSearchConfig(branch_overfetch_floor=-1)
+
+    def test_branch_limit_method(self):
+        """MongoDBHybridSearchConfig.branch_limit() should compute correctly."""
+        from hybridrag.enhancements.mongodb_hybrid_search import (
+            MongoDBHybridSearchConfig,
+        )
+
+        config = MongoDBHybridSearchConfig()
+        assert config.branch_limit(3) == 20   # max(12, 20) = 20
+        assert config.branch_limit(10) == 40  # max(40, 20) = 40
+        assert config.branch_limit(5) == 20   # max(20, 20) = 20
+        assert config.branch_limit(6) == 24   # max(24, 20) = 24
+
+    @staticmethod
+    def _extract_branch_limit(branch_pipeline: list) -> int:
+        """Extract the effective $limit from a fusion input branch pipeline."""
+        for stage in branch_pipeline:
+            if "$limit" in stage:
+                return stage["$limit"]
+            if "$vectorSearch" in stage:
+                return stage["$vectorSearch"].get("limit", 0)
+            if "$search" in stage and "vectorSearch" in stage["$search"]:
+                return stage["$search"]["vectorSearch"].get("limit", 0)
+        return 0

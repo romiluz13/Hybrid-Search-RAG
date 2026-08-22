@@ -2750,6 +2750,142 @@ class MongoVectorDBStorage(BaseVectorStorage):
             f"{timeout_seconds} seconds; last status: {observed}"
         )
 
+    async def probe_index_sync(
+        self,
+        sample_vector: list[float] | None = None,
+        timeout_seconds: float = 60,
+        poll_interval_seconds: float = 2,
+    ) -> dict[str, bool]:
+        """Functional probe: verify seeded documents are actually queryable.
+
+        Atlas Search indexes flip to ``queryable=True`` *before* freshly
+        seeded documents are ingested (eventual consistency).  This method
+        fires a minimal ``$vectorSearch`` and ``$search`` query and waits
+        until both return at least one result, confirming the index is
+        not just structurally ready but also reflects current data.
+
+        Inspired by the Anthropic CMA cookbook's ``wait_for_index_sync``.
+
+        Args:
+            sample_vector: Query vector for the probe.  If ``None``, a
+                zero vector of the embedding dimension is used.
+            timeout_seconds: Maximum total wait time.  Must be positive.
+            poll_interval_seconds: Delay between probe attempts.  Must be
+                non-negative.
+
+        Returns:
+            ``{"vector_synced": bool, "text_synced": bool}`` indicating
+            whether each index returned at least one result within the
+            timeout.
+
+        Raises:
+            ValueError: If storage is not initialized, parameters are
+                invalid, or no embedding dimension is available.
+        """
+        if self._data is None:
+            raise ValueError("Storage not initialized; call initialize() first")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if poll_interval_seconds < 0:
+            raise ValueError("poll_interval_seconds cannot be negative")
+
+        # Resolve probe vector
+        if sample_vector is None:
+            embedding_dim = getattr(self.embedding_func, "embedding_dim", None)
+            if embedding_dim is None:
+                raise ValueError(
+                    "sample_vector is required when embedding_func has no "
+                    "embedding_dim attribute"
+                )
+            sample_vector = [0.0] * embedding_dim
+
+        text_index_name = self._text_index_name()
+        vector_index_name = self._index_name
+
+        vector_synced = False
+        text_synced = False
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+
+        while loop.time() < deadline and not (vector_synced and text_synced):
+            if not vector_synced:
+                try:
+                    cursor = await self._data.aggregate(
+                        [
+                            {
+                                "$vectorSearch": {
+                                    "index": vector_index_name,
+                                    "path": "vector",
+                                    "queryVector": sample_vector,
+                                    "numCandidates": 10,
+                                    "limit": 1,
+                                }
+                            },
+                            {"$limit": 1},
+                            {"$project": {"_id": 1}},
+                        ],
+                        allowDiskUse=True,
+                        maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS,
+                    )
+                    docs = await cursor.to_list(length=1)
+                    if docs:
+                        vector_synced = True
+                        logger.info(
+                            f"[{self.workspace}] Vector index sync probe "
+                            f"successful ({len(docs)} result)"
+                        )
+                except Exception as exc:
+                    logger.debug(
+                        f"[{self.workspace}] Vector index sync probe "
+                        f"retrying: {exc}"
+                    )
+
+            if not text_synced:
+                try:
+                    cursor = await self._data.aggregate(
+                        [
+                            {
+                                "$search": {
+                                    "index": text_index_name,
+                                    "exists": {"path": "content"},
+                                }
+                            },
+                            {"$limit": 1},
+                            {"$project": {"_id": 1}},
+                        ],
+                        allowDiskUse=True,
+                        maxTimeMS=MONGO_AGGREGATE_TIMEOUT_MS,
+                    )
+                    docs = await cursor.to_list(length=1)
+                    if docs:
+                        text_synced = True
+                        logger.info(
+                            f"[{self.workspace}] Text index sync probe "
+                            f"successful ({len(docs)} result)"
+                        )
+                except Exception as exc:
+                    logger.debug(
+                        f"[{self.workspace}] Text index sync probe "
+                        f"retrying: {exc}"
+                    )
+
+            if not (vector_synced and text_synced):
+                await asyncio.sleep(poll_interval_seconds)
+
+        if not vector_synced:
+            logger.warning(
+                f"[{self.workspace}] Vector index sync probe timed out "
+                f"after {timeout_seconds}s"
+            )
+        if not text_synced:
+            logger.warning(
+                f"[{self.workspace}] Text index sync probe timed out "
+                f"after {timeout_seconds}s"
+            )
+
+        return {"vector_synced": vector_synced, "text_synced": text_synced}
+
     def _text_index_name(self) -> str:
         if self.workspace:
             return f"text_search_index_{self._collection_name}"

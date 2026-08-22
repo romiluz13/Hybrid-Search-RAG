@@ -36,6 +36,7 @@ from ..engine.security import (
     scope_document_metadata,
     set_request_security_context,
 )
+from ..engine.utils import bson_to_jsonable
 from .models import (
     ErrorResponse,
     HealthResponse,
@@ -490,7 +491,7 @@ def register_routes(app: FastAPI) -> None:
                 envelope["context"] = result.get("context")
             if request.include_references:
                 envelope["references"] = result.get("references", [])
-            yield json.dumps(envelope) + "\n"
+            yield json.dumps(bson_to_jsonable(envelope)) + "\n"
 
             try:
                 async for chunk in result["response_iterator"]:
@@ -528,11 +529,13 @@ def register_routes(app: FastAPI) -> None:
         options["native_rerank_model"] = request.native_rerank_model
         options["enable_rerank"] = request.enable_rerank
         try:
-            return await rag.explain_query(
-                request.query,
-                mode=request.mode,
-                top_k=request.top_k,
-                **options,
+            return bson_to_jsonable(
+                await rag.explain_query(
+                    request.query,
+                    mode=request.mode,
+                    top_k=request.top_k,
+                    **options,
+                )
             )
         except (RetrievalCapabilityError, RetrievalExecutionError) as exc:
             raise _retrieval_http_exception(exc) from None
@@ -553,12 +556,46 @@ def register_routes(app: FastAPI) -> None:
     async def list_search_indexes() -> list[dict[str, Any]]:
         """Return stable search-index readiness records."""
         try:
-            return await get_rag().list_search_indexes()
+            return bson_to_jsonable(
+                await get_rag().list_search_indexes()
+            )
         except Exception as exc:
             logger.error(f"Search index status error: {exc}", exc_info=True)
             raise HTTPException(
                 status_code=500,
                 detail="Internal server error while reading search indexes",
+            ) from None
+
+    @app.get(
+        "/v1/search-indexes/sync",
+        dependencies=[Depends(guard_operator_request)],
+        tags=["diagnostics"],
+    )
+    async def verify_index_sync(
+        timeout_seconds: float = 60,
+        poll_interval_seconds: float = 2,
+    ) -> dict[str, Any]:
+        """Functional probe: confirm seeded documents are queryable.
+
+        Fires minimal ``$vectorSearch`` and ``$search`` probes to verify
+        that Atlas Search indexes have ingested recently-seeded documents.
+        ``queryable=True`` alone is insufficient because Atlas Search is
+        eventually consistent.
+        """
+        # Clamp timeout to prevent unbounded long-running HTTP requests
+        max_api_timeout = 300.0  # 5 minutes
+        timeout_seconds = min(timeout_seconds, max_api_timeout)
+        try:
+            result = await get_rag().verify_index_sync(
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+            )
+            return bson_to_jsonable(result)
+        except Exception as exc:
+            logger.error(f"Index sync probe error: {exc}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail="Internal server error during index sync probe",
             ) from None
 
     @app.delete(

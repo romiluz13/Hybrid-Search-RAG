@@ -2191,6 +2191,59 @@ Provide a helpful, comprehensive answer."""
             )
         return statuses
 
+    async def verify_index_sync(
+        self,
+        timeout_seconds: float = 60,
+        poll_interval_seconds: float = 2,
+    ) -> dict[str, Any]:
+        """Functional probe: confirm seeded documents are queryable.
+
+        Atlas Search indexes report ``queryable=True`` before freshly
+        seeded documents are ingested (eventual consistency).  This method
+        fires minimal ``$vectorSearch`` and ``$search`` probes against the
+        chunks storage and waits until both return at least one result.
+
+        Inspired by the Anthropic CMA cookbook's ``wait_for_index_sync``.
+
+        Args:
+            timeout_seconds: Maximum total wait time per probe.
+            poll_interval_seconds: Delay between probe attempts.
+
+        Returns:
+            A dict with per-storage sync results::
+
+                {
+                    "chunks": {"vector_synced": bool, "text_synced": bool},
+                    "entities": {"vector_synced": bool, "text_synced": bool},
+                    ...
+                }
+
+            Storages without a ``probe_index_sync`` method are skipped.
+        """
+        rag = self._ensure_initialized()
+        results: dict[str, Any] = {}
+        storages = (
+            ("chunks_vdb", "chunks"),
+            ("entities_vdb", "entities"),
+            ("relationships_vdb", "relationships"),
+        )
+        for attribute, label in storages:
+            storage = getattr(rag, attribute, None)
+            if storage is None:
+                continue
+            probe = getattr(storage, "probe_index_sync", None)
+            if probe is None:
+                continue
+            results[label] = await probe(
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+            )
+        if not results:
+            raise RuntimeError(
+                "Configured storages do not support index sync probing"
+            )
+        return results
+
     async def plan_search_indexes(self) -> list[dict[str, Any]]:
         """Plan every Search and Vector Search index without mutating MongoDB.
 

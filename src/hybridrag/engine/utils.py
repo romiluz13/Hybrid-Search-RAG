@@ -24,6 +24,16 @@ from typing import (
 )
 
 import numpy as np
+from bson import (
+    Code,
+    DBRef,
+    Decimal128,
+    MaxKey,
+    MinKey,
+    ObjectId,
+    Regex,
+    Timestamp,
+)
 from dotenv import load_dotenv
 
 from .constants import (
@@ -40,6 +50,102 @@ from .exceptions import RetrievalCapabilityError, RetrievalExecutionError
 
 # Precompile regex pattern for JSON sanitization (module-level, compiled once)
 _SURROGATE_PATTERN = re.compile(r"[\uD800-\uDFFF\uFFFE\uFFFF]")
+
+# Maximum nesting depth for bson_to_jsonable recursion guard
+_BSON_MAX_RECURSION_DEPTH = 100
+
+
+def bson_to_jsonable(value: Any, _depth: int = 0) -> Any:
+    """Recursively convert BSON types to JSON-safe Python types.
+
+    Handles all BSON types listed in the official MongoDB BSON types
+    reference (https://www.mongodb.com/docs/manual/reference/bson-types/):
+    ``ObjectId``, ``datetime``, ``bytes``, ``Decimal128``, ``Regex``,
+    ``Timestamp``, ``MinKey``, ``MaxKey``, ``Code``, ``DBRef``, and
+    nested ``dict`` / ``list`` / ``tuple`` / ``set`` / ``frozenset``
+    structures.
+
+    MongoDB documents can be serialized with ``json.dumps`` without
+    ``TypeError: Object of type ObjectId is not JSON serializable``.
+
+    Inspired by the Anthropic CMA cookbook's ``_jsonable`` helper.
+
+    Args:
+        value: Any Python value, potentially containing BSON types.
+
+    Returns:
+        A JSON-serializable copy of *value* with all BSON types
+        converted to native Python types (str, dict, list, etc.).
+
+    Raises:
+        RecursionError: If nesting depth exceeds 100 levels.
+    """
+    if _depth > _BSON_MAX_RECURSION_DEPTH:
+        raise RecursionError(
+            f"bson_to_jsonable exceeded max recursion depth "
+            f"({_BSON_MAX_RECURSION_DEPTH})"
+        )
+
+    # --- BSON scalar types ---
+    # ObjectId → str (Extended JSON: {"$oid": "<24-char hex>"})
+    # Ref: https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/#mongodb-type-objectid
+    if isinstance(value, ObjectId):
+        return str(value)
+    # datetime → ISO-8601 string (Extended JSON relaxed: {"$date": "..."})
+    # Ref: https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/#mongodb-type-date
+    if isinstance(value, datetime):
+        return value.isoformat()
+    # bytes → UTF-8 string (Extended JSON: {"$binary": {...}})
+    # Ref: https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/#mongodb-type-binary
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    # Decimal128 → str (Extended JSON: {"$numberDecimal": "..."})
+    # Ref: https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/#mongodb-type-decimal128
+    if isinstance(value, Decimal128):
+        return str(value)
+    # Regex → pattern string (Extended JSON: {"$regularExpression": {"pattern": "..."}})
+    # Ref: https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/#mongodb-type-regex
+    if isinstance(value, Regex):
+        return value.pattern
+    # Timestamp → dict with time/inc (Extended JSON: {"$timestamp": {"t": ..., "i": ...}})
+    # Ref: https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/#mongodb-type-timestamp
+    if isinstance(value, Timestamp):
+        return {"t": value.time, "i": value.inc}
+    # MinKey → str (Extended JSON: {"$minKey": 1})
+    # Ref: https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/#mongodb-type-minkey
+    if isinstance(value, MinKey):
+        return str(value)
+    # MaxKey → str (Extended JSON: {"$maxKey": 1})
+    # Ref: https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/#mongodb-type-maxkey
+    if isinstance(value, MaxKey):
+        return str(value)
+    # Code (JavaScript) → str (Extended JSON: {"$code": "..."})
+    # Ref: https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/#mongodb-type-javascript
+    if isinstance(value, Code):
+        return str(value)
+    # DBRef → str
+    # Ref: https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/#mongodb-type-dbpointer
+    if isinstance(value, DBRef):
+        return str(value)
+
+    # --- Container types ---
+    if isinstance(value, dict):
+        return {
+            str(k): bson_to_jsonable(v, _depth + 1) for k, v in value.items()
+        }
+    if isinstance(value, list | tuple | set | frozenset):
+        return [bson_to_jsonable(v, _depth + 1) for v in value]
+
+    # --- Catch-all: str() for any remaining non-JSON-serializable type ---
+    # Handles rare or custom types that might appear in MongoDB documents
+    # but aren't explicitly listed above (e.g., Int64 on some drivers).
+    if not isinstance(value, str | int | float | bool | type(None)):
+        try:
+            return str(value)
+        except Exception:
+            return repr(value)
+
+    return value
 
 
 class SafeStreamHandler(logging.StreamHandler):
