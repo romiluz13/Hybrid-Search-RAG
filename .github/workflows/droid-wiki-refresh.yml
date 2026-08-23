@@ -7,6 +7,8 @@ on:
 jobs:
   wiki-refresh:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -36,13 +38,10 @@ jobs:
             ]
           }
           JSONEOF
-          echo "--- settings.json content ---"
-          cat ~/.factory/settings.json
-          echo "--- HOME is $HOME ---"
-          echo "--- droid version ---"
-          droid --version
 
       - name: Generate wiki
         run: droid exec --auto high --model "custom:Grove-Claude-Sonnet-5-0" "/wiki"
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
