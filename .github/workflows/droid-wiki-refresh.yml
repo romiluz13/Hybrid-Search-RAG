@@ -13,7 +13,31 @@ jobs:
       - name: Install Factory Droid
         run: curl -fsSL https://app.factory.ai/cli | sh
 
+      - name: Configure Grove model
+        run: |
+          mkdir -p ~/.factory
+          cat > ~/.factory/settings.json << 'EOF'
+          {
+            "customModels": [
+              {
+                "id": "custom:Grove-Claude-Sonnet-5-0",
+                "index": 0,
+                "displayName": "Grove Claude Sonnet 5",
+                "provider": "anthropic",
+                "baseUrl": "https://grove-gateway-prod.azure-api.net/grove-foundry-prod/anthropic",
+                "model": "claude-sonnet-5",
+                "apiKey": "${{ secrets.GROVE_API_KEY }}",
+                "extraHeaders": {
+                  "api-key": "${{ secrets.GROVE_API_KEY }}"
+                },
+                "maxOutputTokens": 64000,
+                "noImageSupport": false
+              }
+            ]
+          }
+          EOF
+
       - name: Generate wiki
-        run: droid exec --auto high --output-format json "/wiki"
+        run: droid exec --auto high "/wiki"
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
