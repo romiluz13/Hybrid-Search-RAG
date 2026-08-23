@@ -16,7 +16,7 @@ jobs:
       - name: Configure Grove model
         run: |
           mkdir -p ~/.factory
-          cat > ~/.factory/settings.json << 'EOF'
+          cat > ~/.factory/settings.json << 'JSONEOF'
           {
             "customModels": [
               {
@@ -35,9 +35,14 @@ jobs:
               }
             ]
           }
-          EOF
+          JSONEOF
+          echo "--- settings.json content ---"
+          cat ~/.factory/settings.json
+          echo "--- HOME is $HOME ---"
+          echo "--- droid version ---"
+          droid --version
 
       - name: Generate wiki
-        run: droid exec --auto high "/wiki"
+        run: droid exec --auto high --model "custom:Grove-Claude-Sonnet-5-0" "/wiki"
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
