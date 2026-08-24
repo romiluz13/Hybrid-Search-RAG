@@ -38,25 +38,25 @@ jobs:
           {
             "customModels": [
               {
-                "id": "custom:Grove-Claude-Sonnet-5-0",
+                "id": "custom:Grove-GLM-5.2-Fireworks-0",
                 "index": 0,
-                "displayName": "Grove Claude Sonnet 5",
-                "provider": "anthropic",
-                "baseUrl": "https://grove-gateway-prod.azure-api.net/grove-foundry-prod/anthropic",
-                "model": "claude-sonnet-5",
+                "displayName": "Grove GLM 5.2 Fireworks",
+                "provider": "generic-chat-completion-api",
+                "baseUrl": "https://grove-gateway-prod.azure-api.net/grove-foundry-prod/openai/v1",
+                "model": "FW-GLM-5.2",
                 "apiKey": "${{ secrets.GROVE_API_KEY }}",
                 "extraHeaders": {
                   "api-key": "${{ secrets.GROVE_API_KEY }}"
                 },
-                "maxOutputTokens": 64000,
-                "noImageSupport": false
+                "maxOutputTokens": 32768,
+                "noImageSupport": true
               }
             ]
           }
           JSONEOF
 
       - name: Generate wiki
-        run: droid exec --skip-permissions-unsafe --model "custom:Grove-Claude-Sonnet-5-0" "/wiki"
+        run: droid exec --skip-permissions-unsafe --model "custom:Grove-GLM-5.2-Fireworks-0" "/wiki"
         env:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
