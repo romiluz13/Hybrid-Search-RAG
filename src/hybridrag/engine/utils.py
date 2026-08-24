@@ -130,9 +130,7 @@ def bson_to_jsonable(value: Any, _depth: int = 0) -> Any:
 
     # --- Container types ---
     if isinstance(value, dict):
-        return {
-            str(k): bson_to_jsonable(v, _depth + 1) for k, v in value.items()
-        }
+        return {str(k): bson_to_jsonable(v, _depth + 1) for k, v in value.items()}
     if isinstance(value, list | tuple | set | frozenset):
         return [bson_to_jsonable(v, _depth + 1) for v in value]
 

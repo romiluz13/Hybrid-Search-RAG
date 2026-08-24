@@ -3,6 +3,17 @@ name: Droid Wiki Refresh
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'docs/**'
+      - 'examples/**'
+      - 'notebooks/**'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'CONTRIBUTING.md'
+      - 'CHANGELOG.md'
+      - 'pyproject.toml'
+      - 'requirements.txt'
 
 jobs:
   wiki-refresh:

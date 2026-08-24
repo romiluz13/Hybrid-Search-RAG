@@ -40,9 +40,7 @@ def _make_mock_storage(
     storage.embedding_func.embedding_dim = embedding_dim
 
     # _text_index_name is a regular method, not async
-    storage._text_index_name = MagicMock(
-        return_value="text_search_index_test_chunks"
-    )
+    storage._text_index_name = MagicMock(return_value="text_search_index_test_chunks")
 
     call_state = {"vector_idx": 0, "text_idx": 0}
 
@@ -94,7 +92,9 @@ async def test_probe_detects_immediate_sync() -> None:
         text_results_sequence=[[{"_id": "doc1"}]],
     )
 
-    result = await storage.probe_index_sync(timeout_seconds=5, poll_interval_seconds=0.1)
+    result = await storage.probe_index_sync(
+        timeout_seconds=5, poll_interval_seconds=0.1
+    )
 
     assert result == {"vector_synced": True, "text_synced": True}
 
@@ -107,7 +107,9 @@ async def test_probe_detects_delayed_sync() -> None:
         text_results_sequence=[[], [{"_id": "doc1"}]],
     )
 
-    result = await storage.probe_index_sync(timeout_seconds=10, poll_interval_seconds=0.05)
+    result = await storage.probe_index_sync(
+        timeout_seconds=10, poll_interval_seconds=0.05
+    )
 
     assert result == {"vector_synced": True, "text_synced": True}
 
@@ -120,7 +122,9 @@ async def test_probe_detects_partial_sync() -> None:
         text_results_sequence=[[]],  # never returns results
     )
 
-    result = await storage.probe_index_sync(timeout_seconds=1, poll_interval_seconds=0.05)
+    result = await storage.probe_index_sync(
+        timeout_seconds=1, poll_interval_seconds=0.05
+    )
 
     assert result == {"vector_synced": True, "text_synced": False}
 
@@ -138,7 +142,9 @@ async def test_probe_times_out_when_never_synced() -> None:
         text_results_sequence=[[]],
     )
 
-    result = await storage.probe_index_sync(timeout_seconds=0.5, poll_interval_seconds=0.1)
+    result = await storage.probe_index_sync(
+        timeout_seconds=0.5, poll_interval_seconds=0.1
+    )
 
     assert result == {"vector_synced": False, "text_synced": False}
 
@@ -167,7 +173,9 @@ async def test_probe_swallows_aggregate_errors_and_retries() -> None:
 
     storage._data.aggregate = flaky_aggregate
 
-    result = await storage.probe_index_sync(timeout_seconds=5, poll_interval_seconds=0.05)
+    result = await storage.probe_index_sync(
+        timeout_seconds=5, poll_interval_seconds=0.05
+    )
 
     assert result == {"vector_synced": True, "text_synced": True}
 
@@ -212,9 +220,7 @@ async def test_probe_uses_zero_vector_when_none_provided() -> None:
     await storage.probe_index_sync(timeout_seconds=5, poll_interval_seconds=0.1)
 
     # Find the vector search pipeline
-    vector_pipeline = next(
-        p for p in captured_pipelines if "$vectorSearch" in str(p)
-    )
+    vector_pipeline = next(p for p in captured_pipelines if "$vectorSearch" in str(p))
     vs_stage = next(s for s in vector_pipeline if "$vectorSearch" in s)
     query_vector = vs_stage["$vectorSearch"]["queryVector"]
 

@@ -205,13 +205,9 @@ class MongoDBHybridSearchConfig:
                 "vector_num_candidates must produce numCandidates between 1 and 10000"
             )
         if self.branch_overfetch_factor < 1:
-            raise RetrievalValidationError(
-                "branch_overfetch_factor must be >= 1"
-            )
+            raise RetrievalValidationError("branch_overfetch_factor must be >= 1")
         if self.branch_overfetch_floor < 0:
-            raise RetrievalValidationError(
-                "branch_overfetch_floor must be >= 0"
-            )
+            raise RetrievalValidationError("branch_overfetch_floor must be >= 0")
 
     def get_search_paths(self) -> list[str]:
         """Get list of search paths."""

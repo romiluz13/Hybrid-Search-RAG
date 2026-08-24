@@ -2239,9 +2239,7 @@ Provide a helpful, comprehensive answer."""
                 poll_interval_seconds=poll_interval_seconds,
             )
         if not results:
-            raise RuntimeError(
-                "Configured storages do not support index sync probing"
-            )
+            raise RuntimeError("Configured storages do not support index sync probing")
         return results
 
     async def plan_search_indexes(self) -> list[dict[str, Any]]:

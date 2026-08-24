@@ -646,9 +646,7 @@ class TestBranchOverfetchFloor:
             MongoDBHybridSearchConfig,
         )
 
-        with pytest.raises(
-            RetrievalValidationError, match="branch_overfetch_factor"
-        ):
+        with pytest.raises(RetrievalValidationError, match="branch_overfetch_factor"):
             MongoDBHybridSearchConfig(branch_overfetch_factor=0)
 
     def test_config_rejects_negative_overfetch_floor(self):
@@ -657,9 +655,7 @@ class TestBranchOverfetchFloor:
             MongoDBHybridSearchConfig,
         )
 
-        with pytest.raises(
-            RetrievalValidationError, match="branch_overfetch_floor"
-        ):
+        with pytest.raises(RetrievalValidationError, match="branch_overfetch_floor"):
             MongoDBHybridSearchConfig(branch_overfetch_floor=-1)
 
     def test_branch_limit_method(self):
@@ -669,10 +665,10 @@ class TestBranchOverfetchFloor:
         )
 
         config = MongoDBHybridSearchConfig()
-        assert config.branch_limit(3) == 20   # max(12, 20) = 20
+        assert config.branch_limit(3) == 20  # max(12, 20) = 20
         assert config.branch_limit(10) == 40  # max(40, 20) = 40
-        assert config.branch_limit(5) == 20   # max(20, 20) = 20
-        assert config.branch_limit(6) == 24   # max(24, 20) = 24
+        assert config.branch_limit(5) == 20  # max(20, 20) = 20
+        assert config.branch_limit(6) == 24  # max(24, 20) = 24
 
     @staticmethod
     def _extract_branch_limit(branch_pipeline: list) -> int:

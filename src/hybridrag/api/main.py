@@ -556,9 +556,7 @@ def register_routes(app: FastAPI) -> None:
     async def list_search_indexes() -> list[dict[str, Any]]:
         """Return stable search-index readiness records."""
         try:
-            return bson_to_jsonable(
-                await get_rag().list_search_indexes()
-            )
+            return bson_to_jsonable(await get_rag().list_search_indexes())
         except Exception as exc:
             logger.error(f"Search index status error: {exc}", exc_info=True)
             raise HTTPException(

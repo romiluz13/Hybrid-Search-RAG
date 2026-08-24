@@ -2837,8 +2837,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
                         )
                 except Exception as exc:
                     logger.debug(
-                        f"[{self.workspace}] Vector index sync probe "
-                        f"retrying: {exc}"
+                        f"[{self.workspace}] Vector index sync probe retrying: {exc}"
                     )
 
             if not text_synced:
@@ -2866,8 +2865,7 @@ class MongoVectorDBStorage(BaseVectorStorage):
                         )
                 except Exception as exc:
                     logger.debug(
-                        f"[{self.workspace}] Text index sync probe "
-                        f"retrying: {exc}"
+                        f"[{self.workspace}] Text index sync probe retrying: {exc}"
                     )
 
             if not (vector_synced and text_synced):
