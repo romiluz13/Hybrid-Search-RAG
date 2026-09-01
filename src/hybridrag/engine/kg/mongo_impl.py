@@ -2521,9 +2521,25 @@ class MongoVectorDBStorage(BaseVectorStorage):
         embedding_backend = self._vector_embedding_backend()
         if embedding_backend not in {"client", "automated"}:
             raise ValueError("vector_embedding_backend must be 'client' or 'automated'")
-        supported_quantization = {None, "none", "scalar", "binary"}
         if embedding_backend == "automated":
-            supported_quantization.add("binaryNoRescore")
+            # autoEmbed supports float, scalar, binary, binaryNoRescore per
+            # https://www.mongodb.com/docs/vector-search/indexes/vector-search-type/
+            supported_quantization = {
+                None,
+                "float",
+                "scalar",
+                "binary",
+                "binaryNoRescore",
+            }
+        else:
+            supported_quantization = {
+                None,
+                "none",
+                "float",
+                "scalar",
+                "binary",
+                "binaryNoRescore",
+            }
         if quantization not in supported_quantization:
             raise ValueError(
                 "quantization is not supported for the selected embedding backend"
@@ -2537,6 +2553,14 @@ class MongoVectorDBStorage(BaseVectorStorage):
             type(num_dimensions) is not int or not 1 <= num_dimensions <= 8192
         ):
             raise ValueError("num_dimensions must be an integer from 1 through 8192")
+        if (
+            embedding_backend == "automated"
+            and num_dimensions is not None
+            and num_dimensions not in {256, 512, 1024, 2048}
+        ):
+            raise ValueError(
+                "num_dimensions must be 256, 512, 1024, or 2048 for automated embedding"
+            )
         if similarity not in {None, "euclidean", "cosine", "dotProduct"}:
             raise ValueError(
                 "similarity must be 'euclidean', 'cosine', 'dotProduct', or None"

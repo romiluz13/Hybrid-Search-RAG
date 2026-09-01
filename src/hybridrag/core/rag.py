@@ -776,6 +776,7 @@ class HybridRAG:
             config=config,
             documents_collection="ingested_documents",
             chunks_collection="ingested_chunks",
+            vector_embedding_backend=self.settings.vector_embedding_backend,
         )
 
         import time as _time
@@ -1041,6 +1042,7 @@ class HybridRAG:
                 config=config,
                 documents_collection="ingested_documents",
                 chunks_collection="ingested_chunks",
+                vector_embedding_backend=self.settings.vector_embedding_backend,
             )
 
             result = await pipeline.ingest_text(
@@ -1319,6 +1321,7 @@ class HybridRAG:
                 config=config,
                 documents_collection="ingested_documents",
                 chunks_collection="ingested_chunks",
+                vector_embedding_backend=self.settings.vector_embedding_backend,
             )
 
             # Process each page

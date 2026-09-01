@@ -68,6 +68,7 @@ class DocumentIngestionPipeline:
         config: IngestionConfig | None = None,
         documents_collection: str = "documents",
         chunks_collection: str = "chunks",
+        vector_embedding_backend: str = "client",
     ) -> None:
         """
         Initialize the ingestion pipeline.
@@ -78,12 +79,17 @@ class DocumentIngestionPipeline:
             config: Ingestion configuration.
             documents_collection: Name of documents collection.
             chunks_collection: Name of chunks collection.
+            vector_embedding_backend: ``"client"`` for client-side Voyage
+                embeddings or ``"automated"`` for MongoDB Automated Embedding.
+                When ``"automated"``, embeddings are generated server-side by
+                MongoDB Atlas and the pipeline skips client-side generation.
         """
         self.db = db
         self.embedding_func = embedding_func
         self.config = config or IngestionConfig()
         self.documents_collection = documents_collection
         self.chunks_collection = chunks_collection
+        self.vector_embedding_backend = vector_embedding_backend
 
         # Initialize components
         self.processor = create_document_processor(
@@ -259,9 +265,15 @@ class DocumentIngestionPipeline:
 
             logger.info(f"Created {len(chunks)} chunks")
 
-            # Step 3: Generate embeddings
-            chunks = await self._generate_embeddings(chunks)
-            logger.info(f"Generated embeddings for {len(chunks)} chunks")
+            # Step 3: Generate embeddings (skip if MongoDB Automated Embedding)
+            if self.vector_embedding_backend == "client":
+                chunks = await self._generate_embeddings(chunks)
+                logger.info(f"Generated embeddings for {len(chunks)} chunks")
+            else:
+                logger.info(
+                    "Skipping client-side embeddings "
+                    "(MongoDB Automated Embedding enabled)"
+                )
 
             # Step 4: Store in MongoDB
             document_id = await self._store_document(processed, chunks)
@@ -340,8 +352,14 @@ class DocumentIngestionPipeline:
                     format_type="text",
                 )
 
-            # Generate embeddings and store
-            chunks = await self._generate_embeddings(chunks)
+            # Generate embeddings and store (skip if MongoDB Automated Embedding)
+            if self.vector_embedding_backend == "client":
+                chunks = await self._generate_embeddings(chunks)
+            else:
+                logger.info(
+                    "Skipping client-side embeddings "
+                    "(MongoDB Automated Embedding enabled)"
+                )
             document_id = await self._store_document(processed, chunks)
 
             return IngestionResult(
@@ -453,12 +471,16 @@ class DocumentIngestionPipeline:
         for chunk in chunks:
             chunk_dict = {
                 "content": chunk.content,
-                "embedding": chunk.embedding,
                 "chunk_index": chunk.index,
                 "metadata": chunk.metadata,
                 "token_count": chunk.token_count,
                 "created_at": datetime.now(UTC),
             }
+            # Only store the embedding field when using client-side embeddings.
+            # With automated embedding, MongoDB generates vectors from
+            # the content field at index time.
+            if self.vector_embedding_backend == "client":
+                chunk_dict["embedding"] = chunk.embedding
             chunk_dicts.append(chunk_dict)
 
         async def _do_insert(session=None):
@@ -505,6 +527,7 @@ def create_ingestion_pipeline(
     db: AsyncDatabase,
     embedding_func: Callable[[list[str]], list[list[float]]],
     config: IngestionConfig | None = None,
+    vector_embedding_backend: str = "client",
 ) -> DocumentIngestionPipeline:
     """
     Create a document ingestion pipeline.
@@ -513,6 +536,7 @@ def create_ingestion_pipeline(
         db: MongoDB async database instance.
         embedding_func: Function to generate embeddings.
         config: Ingestion configuration.
+        vector_embedding_backend: ``"client"`` or ``"automated"``.
 
     Returns:
         DocumentIngestionPipeline instance.
@@ -521,4 +545,5 @@ def create_ingestion_pipeline(
         db=db,
         embedding_func=embedding_func,
         config=config,
+        vector_embedding_backend=vector_embedding_backend,
     )

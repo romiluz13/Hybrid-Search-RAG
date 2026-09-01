@@ -135,7 +135,7 @@ class Settings(BaseSettings):
         description="Public metadata filter paths and Atlas Search mapping types",
     )
     vector_embedding_backend: Literal["client", "automated"] = Field(
-        default="client",
+        default="automated",
         description="Client-generated vectors or MongoDB Automated Embedding",
     )
     automated_embedding_model: str = Field(

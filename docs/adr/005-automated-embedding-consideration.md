@@ -5,6 +5,14 @@
 Superseded by ADR-0008. The constraints below remain design inputs for the
 separate chunk and knowledge-graph embedding paths.
 
+**Update (2026-09-01):** ADR-0008's "active implementation track" is now the
+default. The ingestion pipeline gap (reason 3 below — "Dual-path embedding")
+has been closed: `DocumentIngestionPipeline` skips client-side embedding
+generation when `vector_embedding_backend="automated"`. The chunk embedding
+path now defaults to `"automated"` in `settings.py` and `.env.example`. The
+knowledge-graph embedding path remains client-side by design (ADR-0008).
+Reasons 1, 2, and 4 remain as noted trade-offs.
+
 ## Context
 
 MongoDB Atlas provides [Automated Embedding](https://www.mongodb.com/docs/atlas/atlas-vector-search/automated-embedding/)
